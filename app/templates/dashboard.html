@@ -126,10 +126,16 @@
         <div class="watch-actions">
             <form action="/check-watch/{{ w.id }}" method="POST">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-ghost btn-sm">↻ Check</button>
+                <button type="submit" class="btn action-btn">↻ Check</button>
             </form>
             <details class="edit-watch">
-                <summary class="btn btn-ghost btn-sm">Edit Alert</summary>
+                <summary class="btn action-btn">
+                    <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                    <span>Edit</span>
+                </summary>
                 <form action="/edit/{{ w.id }}" method="POST" class="edit-watch-form">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="form-grid">
@@ -153,7 +159,7 @@
             </details>
             <form action="/delete/{{ w.id }}" method="POST">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Remove this alert?')">✕ Remove</button>
+                <button type="submit" class="btn action-btn action-danger" onclick="return confirm('Remove this alert?')">✕ Remove</button>
             </form>
         </div>
     </div>
@@ -195,8 +201,54 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    width: 118px;
     flex-shrink: 0;
-    align-items: flex-end;
+    align-items: stretch;
+    margin-left: auto;
+}
+
+.watch-actions form,
+.edit-watch {
+    width: 100%;
+}
+
+.action-btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: flex-start;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    padding: 0 12px !important;
+    font-size: 12px !important;
+}
+
+.action-btn:hover,
+.edit-watch[open] summary {
+    border-color: var(--accent);
+    color: var(--accent-light);
+}
+
+.action-icon {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex-shrink: 0;
+}
+
+.action-danger {
+    border-color: rgba(248, 81, 73, 0.45);
+    color: var(--red);
+}
+
+.action-danger:hover {
+    border-color: var(--red);
+    background: rgba(248, 81, 73, 0.1);
+    color: var(--red);
 }
 
 .edit-watch {
@@ -210,11 +262,6 @@
 
 .edit-watch summary::-webkit-details-marker {
     display: none;
-}
-
-.edit-watch[open] summary {
-    border-color: var(--accent);
-    color: var(--accent-light);
 }
 
 .edit-watch-form {
@@ -248,19 +295,13 @@
         gap: 10px;
     }
 
-    .watch-card {
-        flex-wrap: wrap;
-    }
-
     .watch-actions {
-        align-items: stretch;
-        width: 100%;
+        width: 112px;
     }
 
     .edit-watch-form {
-        position: static;
-        width: 100%;
-        margin-top: 8px;
+        position: absolute;
+        width: min(520px, calc(100vw - 48px));
     }
 }
 </style>
