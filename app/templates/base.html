@@ -464,6 +464,279 @@
             font-size: 11px;
         }
 
+        .icon-btn {
+            width: 36px;
+            height: 36px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: border-color 0.15s, color 0.15s, background 0.15s;
+        }
+
+        .icon-btn:hover,
+        .dropdown[open] > .icon-btn {
+            border-color: var(--accent);
+            color: var(--accent-light);
+            background: var(--accent-glow);
+        }
+
+        .icon-btn svg {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+        }
+
+        .menu-list {
+            padding: 6px;
+        }
+
+        .menu-list form {
+            margin: 0;
+        }
+
+        .menu-item {
+            width: 100%;
+            min-height: 38px;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 0 10px;
+            background: transparent;
+            border: 0;
+            border-radius: 5px;
+            color: var(--text-dim);
+            font-family: var(--mono);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-align: left;
+            text-decoration: none;
+            cursor: pointer;
+            transition: color 0.15s, background 0.15s;
+        }
+
+        .menu-item:hover {
+            color: var(--accent-light);
+            background: var(--accent-glow);
+        }
+
+        .menu-item-danger {
+            color: var(--red);
+        }
+
+        .menu-item-danger:hover {
+            color: var(--red);
+            background: rgba(248, 81, 73, 0.1);
+        }
+
+        .menu-item-icon {
+            width: 16px;
+            height: 16px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            flex-shrink: 0;
+        }
+
+        /* App dropdown primitive */
+        .dropdown {
+            position: relative;
+        }
+
+        .dropdown-toggle {
+            list-style: none;
+        }
+
+        .dropdown-toggle::-webkit-details-marker {
+            display: none;
+        }
+
+        .dropdown-panel {
+            --dropdown-x: 0;
+            --dropdown-width: 240px;
+            --dropdown-min-width: 180px;
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            z-index: 80;
+            width: min(var(--dropdown-width), calc(100vw - 32px));
+            min-width: min(var(--dropdown-min-width), calc(100vw - 32px));
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+            transform-origin: top right;
+            animation: dropdownZoomIn 140ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .dropdown-align-start .dropdown-panel {
+            left: 0;
+            right: auto;
+            transform-origin: top left;
+        }
+
+        .dropdown-align-center .dropdown-panel {
+            left: 50%;
+            right: auto;
+            --dropdown-x: -50%;
+            transform-origin: top center;
+        }
+
+        .dropdown[data-closing] .dropdown-panel {
+            animation: dropdownZoomOut 110ms ease-in forwards;
+        }
+
+        @keyframes dropdownZoomIn {
+            from {
+                opacity: 0;
+                transform: translateX(var(--dropdown-x)) translateY(-4px) scale(0.96);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(var(--dropdown-x)) translateY(0) scale(1);
+            }
+        }
+
+        @keyframes dropdownZoomOut {
+            from {
+                opacity: 1;
+                transform: translateX(var(--dropdown-x)) translateY(0) scale(1);
+            }
+            to {
+                opacity: 0;
+                transform: translateX(var(--dropdown-x)) translateY(-4px) scale(0.96);
+            }
+        }
+
+        /* App modal primitive */
+        .app-modal {
+            width: min(560px, calc(100vw - 32px));
+            max-height: min(82vh, 720px);
+            overflow: auto;
+            padding: 0;
+            color: var(--text);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: 0 28px 90px rgba(0, 0, 0, 0.5);
+            animation: modalZoomIn 160ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .app-modal::backdrop {
+            background: rgba(4, 8, 13, 0.62);
+            backdrop-filter: blur(7px);
+            animation: backdropFadeIn 160ms ease-out forwards;
+        }
+
+        .app-modal[data-closing] {
+            animation: modalZoomOut 130ms ease-in forwards;
+        }
+
+        .app-modal[data-closing]::backdrop {
+            animation: backdropFadeOut 130ms ease-in forwards;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 20px 20px 0;
+        }
+
+        .modal-title {
+            color: var(--text);
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .modal-sub {
+            color: var(--text-faint);
+            font-size: 12px;
+            margin-top: 2px;
+        }
+
+        .modal-close {
+            width: 34px;
+            height: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 20px;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        @keyframes modalZoomIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px) scale(0.96);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        @keyframes modalZoomOut {
+            from {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+            to {
+                opacity: 0;
+                transform: translateY(10px) scale(0.96);
+            }
+        }
+
+        @keyframes backdropFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes backdropFadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .dropdown-panel,
+            .dropdown[data-closing] .dropdown-panel,
+            .app-modal,
+            .app-modal::backdrop,
+            .app-modal[data-closing],
+            .app-modal[data-closing]::backdrop {
+                animation: none;
+            }
+        }
+
         /* ── Stats ── */
         .stats-row {
             display: grid;
@@ -794,20 +1067,162 @@
     {% endif %}
 
     <script>
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    function shouldReduceMotion() {
+        return reducedMotion.matches;
+    }
+
     function toggleMenu() {
         const btn = document.getElementById('hamburgerBtn');
         const menu = document.getElementById('mobileMenu');
+        if (!btn || !menu) return;
         btn.classList.toggle('open');
         menu.classList.toggle('open');
     }
-    // Close menu when clicking outside
-    document.addEventListener('click', function(e) {
+
+    function closeMobileMenu() {
         const btn = document.getElementById('hamburgerBtn');
         const menu = document.getElementById('mobileMenu');
-        if (btn && menu && !btn.contains(e.target) && !menu.contains(e.target)) {
-            btn.classList.remove('open');
-            menu.classList.remove('open');
+        if (!btn || !menu) return;
+        btn.classList.remove('open');
+        menu.classList.remove('open');
+    }
+
+    function closeDropdown(dropdown) {
+        if (!dropdown || !dropdown.open) return;
+
+        if (shouldReduceMotion()) {
+            dropdown.open = false;
+            dropdown.removeAttribute('data-closing');
+            return;
         }
+
+        const panel = dropdown.querySelector('.dropdown-panel');
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            dropdown.open = false;
+            dropdown.removeAttribute('data-closing');
+        };
+
+        dropdown.setAttribute('data-closing', '');
+        if (panel) {
+            panel.addEventListener('animationend', finish, { once: true });
+            window.setTimeout(finish, 180);
+        } else {
+            finish();
+        }
+    }
+
+    function closeAllDropdowns(except = null) {
+        document.querySelectorAll('details.dropdown[open]').forEach((dropdown) => {
+            if (dropdown !== except) closeDropdown(dropdown);
+        });
+    }
+
+    function isModalOpen(dialog) {
+        return Boolean(dialog && (dialog.open || dialog.hasAttribute('open')));
+    }
+
+    function openModal(dialog) {
+        if (!dialog || isModalOpen(dialog)) return;
+        closeAllDropdowns();
+        dialog.removeAttribute('data-closing');
+        if (typeof dialog.showModal === 'function') {
+            dialog.showModal();
+        } else {
+            dialog.setAttribute('open', '');
+        }
+    }
+
+    function closeModal(dialog) {
+        if (!dialog || !isModalOpen(dialog)) return;
+
+        if (shouldReduceMotion()) {
+            if (typeof dialog.close === 'function') {
+                dialog.close();
+            } else {
+                dialog.removeAttribute('open');
+            }
+            dialog.removeAttribute('data-closing');
+            return;
+        }
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            if (typeof dialog.close === 'function') {
+                dialog.close();
+            } else {
+                dialog.removeAttribute('open');
+            }
+            dialog.removeAttribute('data-closing');
+        };
+
+        dialog.setAttribute('data-closing', '');
+        dialog.addEventListener('animationend', finish, { once: true });
+        window.setTimeout(finish, 220);
+    }
+
+    document.querySelectorAll('.dropdown-toggle').forEach((trigger) => {
+        trigger.addEventListener('click', (event) => {
+            const dropdown = trigger.closest('details.dropdown');
+            if (!dropdown) return;
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (dropdown.open) {
+                closeDropdown(dropdown);
+                return;
+            }
+
+            closeAllDropdowns(dropdown);
+            dropdown.removeAttribute('data-closing');
+            dropdown.open = true;
+        });
+    });
+
+    document.querySelectorAll('[data-modal-target]').forEach((trigger) => {
+        trigger.addEventListener('click', (event) => {
+            event.preventDefault();
+            const dialog = document.getElementById(trigger.dataset.modalTarget);
+            openModal(dialog);
+        });
+    });
+
+    document.querySelectorAll('[data-modal-close]').forEach((trigger) => {
+        trigger.addEventListener('click', () => {
+            closeModal(trigger.closest('dialog'));
+        });
+    });
+
+    document.querySelectorAll('.app-modal').forEach((dialog) => {
+        dialog.addEventListener('click', (event) => {
+            if (event.target === dialog) closeModal(dialog);
+        });
+        dialog.addEventListener('cancel', (event) => {
+            event.preventDefault();
+            closeModal(dialog);
+        });
+    });
+
+    document.addEventListener('click', (event) => {
+        const btn = document.getElementById('hamburgerBtn');
+        const menu = document.getElementById('mobileMenu');
+        if (btn && menu && !btn.contains(event.target) && !menu.contains(event.target)) {
+            closeMobileMenu();
+        }
+
+        document.querySelectorAll('details.dropdown[open]').forEach((dropdown) => {
+            if (!dropdown.contains(event.target)) closeDropdown(dropdown);
+        });
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeAllDropdowns();
     });
     </script>
 </body>

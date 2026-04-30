@@ -92,14 +92,9 @@
                 {% else %}
                     <span class="chip">all roles</span>
                 {% endif %}
-                <form action="/toggle-email/{{ w.id }}" method="POST" class="chip-form">
-                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                    {% if w.email_enabled %}
-                        <button type="submit" class="chip chip-button">pause email</button>
-                    {% else %}
-                        <button type="submit" class="chip chip-button warn">resume email</button>
-                    {% endif %}
-                </form>
+                {% if not w.email_enabled %}
+                    <span class="chip warn">notifications paused</span>
+                {% endif %}
                 {% if w.last_error %}
                     <span class="chip warn">last scan failed</span>
                 {% endif %}
@@ -139,46 +134,100 @@
         </div>
 
         <div class="watch-actions">
-            <form action="/check-watch/{{ w.id }}" method="POST">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn action-btn">↻ Check</button>
-            </form>
-            <details class="edit-watch">
-                <summary class="btn action-btn">
-                    <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M12 20h9" />
-                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            <details class="dropdown card-menu">
+                <summary class="icon-btn dropdown-toggle" aria-label="Alert settings for {{ w.company_name }}" aria-haspopup="menu">
+                    <svg class="kebab-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="5" r="1.8" />
+                        <circle cx="12" cy="12" r="1.8" />
+                        <circle cx="12" cy="19" r="1.8" />
                     </svg>
-                    <span>Edit</span>
                 </summary>
-                <form action="/edit/{{ w.id }}" method="POST" class="edit-watch-form">
-                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                    <div class="form-grid">
-                        <div class="field">
-                            <label>Company Name</label>
-                            <input type="text" name="company_name" value="{{ w.company_name }}" required>
-                        </div>
-                        <div class="field">
-                            <label>Careers Page URL</label>
-                            <input type="url" name="custom_url" value="{{ w.careers_url }}" required>
-                        </div>
-                        <div class="field form-full">
-                            <label>Keywords <span style="font-weight:400; color:var(--text-faint);">(optional)</span></label>
-                            <input type="text" name="keywords" value="{{ w.keywords }}" placeholder="engineer, mechanical, product designer">
-                        </div>
-                    </div>
-                    <div class="edit-watch-actions">
-                        <button type="submit" formaction="{{ url_for('preview_watch', watch_id=w.id) }}" class="btn btn-ghost btn-sm">Preview</button>
-                        <button type="submit" class="btn btn-primary btn-sm">Save & Check</button>
-                    </div>
-                </form>
+                <div class="dropdown-panel menu-list card-menu-panel" role="menu">
+                    <form action="/check-watch/{{ w.id }}" method="POST">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="menu-item" role="menuitem">
+                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M3 12a9 9 0 0 1 15.5-6.2" />
+                                <path d="M18 3v5h-5" />
+                                <path d="M21 12a9 9 0 0 1-15.5 6.2" />
+                                <path d="M6 21v-5h5" />
+                            </svg>
+                            <span>Check</span>
+                        </button>
+                    </form>
+                    <form action="/toggle-email/{{ w.id }}" method="POST">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="menu-item" role="menuitem">
+                            {% if w.email_enabled %}
+                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+                                <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+                                <path d="M4 4l16 16" />
+                            </svg>
+                            <span>Pause Notifications</span>
+                            {% else %}
+                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+                                <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+                            </svg>
+                            <span>Resume Notifications</span>
+                            {% endif %}
+                        </button>
+                    </form>
+                    <button type="button" class="menu-item" role="menuitem" data-modal-target="edit-watch-{{ w.id }}">
+                        <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 20h9" />
+                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                        </svg>
+                        <span>Edit</span>
+                    </button>
+                    <form action="/delete/{{ w.id }}" method="POST">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="menu-item menu-item-danger" role="menuitem" onclick="return confirm('Delete this alert?')">
+                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M3 6h18" />
+                                <path d="M8 6V4h8v2" />
+                                <path d="M19 6l-1 14H6L5 6" />
+                                <path d="M10 11v5" />
+                                <path d="M14 11v5" />
+                            </svg>
+                            <span>Delete</span>
+                        </button>
+                    </form>
+                </div>
             </details>
-            <form action="/delete/{{ w.id }}" method="POST">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn action-btn action-danger" onclick="return confirm('Remove this alert?')">✕ Remove</button>
-            </form>
         </div>
     </div>
+    <dialog class="app-modal edit-modal" id="edit-watch-{{ w.id }}">
+        <div class="modal-header">
+            <div>
+                <div class="modal-title">Edit {{ w.company_name }}</div>
+                <div class="modal-sub">Save changes to run a fresh check.</div>
+            </div>
+            <button type="button" class="modal-close" data-modal-close aria-label="Close edit dialog">&times;</button>
+        </div>
+        <form action="/edit/{{ w.id }}" method="POST" class="modal-body">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="form-grid">
+                <div class="field">
+                    <label>Company Name</label>
+                    <input type="text" name="company_name" value="{{ w.company_name }}" required>
+                </div>
+                <div class="field">
+                    <label>Careers Page URL</label>
+                    <input type="url" name="custom_url" value="{{ w.careers_url }}" required>
+                </div>
+                <div class="field form-full">
+                    <label>Keywords <span style="font-weight:400; color:var(--text-faint);">(optional)</span></label>
+                    <input type="text" name="keywords" value="{{ w.keywords }}" placeholder="engineer, mechanical, product designer">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="submit" formaction="{{ url_for('preview_watch', watch_id=w.id) }}" class="btn btn-ghost">Preview</button>
+                <button type="submit" class="btn btn-primary">Save & Check</button>
+            </div>
+        </form>
+    </dialog>
     {% endfor %}
 {% else %}
     <div class="empty">
@@ -216,7 +265,7 @@
 
 .watch-card {
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr) 118px;
+    grid-template-columns: 38px minmax(0, 1fr) 40px;
     grid-template-areas:
         "icon summary actions"
         ". body actions";
@@ -249,21 +298,6 @@
     font-size: 13px;
 }
 
-.chip-form {
-    display: inline;
-    margin: 0;
-}
-
-.chip-button {
-    cursor: pointer;
-    font: inherit;
-}
-
-.chip-button:hover {
-    border-color: var(--accent);
-    color: var(--accent-light);
-}
-
 .watch-error {
     margin-top: 8px;
     color: #fbbf24;
@@ -272,96 +306,21 @@
 
 .watch-actions {
     grid-area: actions;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 118px;
-    flex-shrink: 0;
-    align-items: stretch;
-    margin-left: auto;
+    justify-self: end;
     align-self: start;
 }
 
-.watch-actions form,
-.edit-watch {
-    width: 100%;
+.card-menu {
+    width: 36px;
 }
 
-.action-btn {
-    width: 100%;
-    min-height: 40px;
-    justify-content: flex-start;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-dim);
-    padding: 0 12px !important;
-    font-size: 12px !important;
+.card-menu-panel {
+    --dropdown-width: 224px;
+    --dropdown-min-width: 224px;
 }
 
-.action-btn:hover,
-.edit-watch[open] summary {
-    border-color: var(--accent);
-    color: var(--accent-light);
-}
-
-.action-icon {
-    width: 14px;
-    height: 14px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    flex-shrink: 0;
-}
-
-.action-danger {
-    border-color: rgba(248, 81, 73, 0.45);
-    color: var(--red);
-}
-
-.action-danger:hover {
-    border-color: var(--red);
-    background: rgba(248, 81, 73, 0.1);
-    color: var(--red);
-}
-
-.edit-watch {
-    position: relative;
-    margin: 0;
-}
-
-.edit-watch summary {
-    list-style: none;
-}
-
-.edit-watch summary::-webkit-details-marker {
-    display: none;
-}
-
-.edit-watch-form {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 8px);
-    z-index: 20;
-    width: min(520px, calc(100vw - 48px));
-    padding: 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
-}
-
-.edit-watch-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-start;
-    margin-top: 12px;
-}
-
-.btn-sm {
-    font-size: 12px !important;
-    padding: 5px 12px !important;
+.kebab-icon {
+    fill: currentColor;
 }
 
 @media (max-width: 640px) {
@@ -372,34 +331,17 @@
     }
 
     .watch-card {
-        grid-template-columns: 38px minmax(0, 1fr);
+        grid-template-columns: 38px minmax(0, 1fr) 40px;
         grid-template-areas:
-            "icon summary"
-            "actions actions"
-            "body body";
+            "icon summary actions"
+            "body body body";
         column-gap: 12px;
         row-gap: 14px;
         padding: 16px;
     }
 
     .watch-actions {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        width: 100%;
-        margin-left: 0;
-    }
-
-    .action-btn {
-        justify-content: center;
-        padding: 0 8px !important;
-    }
-
-    .edit-watch-form {
-        position: absolute;
-        left: 50%;
-        right: auto;
-        transform: translateX(-50%);
-        width: min(520px, calc(100vw - 48px));
+        align-self: start;
     }
 
     .job-row {
@@ -408,10 +350,6 @@
 }
 
 @media (max-width: 420px) {
-    .action-btn {
-        font-size: 11px !important;
-    }
-
     .job-row {
         flex-wrap: wrap;
     }
