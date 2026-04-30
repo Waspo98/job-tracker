@@ -33,6 +33,7 @@ def init_db():
                 ats_type TEXT,
                 ats_slug TEXT,
                 keywords TEXT NOT NULL DEFAULT '',
+                email_enabled INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_checked TIMESTAMP,
                 last_success_at TIMESTAMP,
@@ -96,6 +97,10 @@ def init_db():
         if 'last_error' not in watch_cols:
             logger.info("Migrating watches table to add last_error")
             conn.execute("ALTER TABLE watches ADD COLUMN last_error TEXT")
+        if 'email_enabled' not in watch_cols:
+            logger.info("Migrating watches table to add email_enabled")
+            conn.execute("ALTER TABLE watches ADD COLUMN email_enabled INTEGER DEFAULT 1")
+            conn.execute("UPDATE watches SET email_enabled = 1 WHERE email_enabled IS NULL")
 
         # Migration 2: add active column to found_jobs if missing
         cols = [r['name'] for r in conn.execute("PRAGMA table_info(found_jobs)").fetchall()]
@@ -209,6 +214,15 @@ def update_watch(watch_id, user_id, company_name, careers_url, keywords):
             "ats_slug = NULL, keywords = ?, last_error = NULL "
             "WHERE id = ? AND user_id = ? AND active = 1",
             (company_name.strip(), careers_url, keywords.strip(), watch_id, user_id)
+        )
+        return cur.rowcount > 0
+
+
+def set_watch_email_enabled(watch_id, user_id, enabled):
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE watches SET email_enabled = ? WHERE id = ? AND user_id = ? AND active = 1",
+            (1 if enabled else 0, watch_id, user_id)
         )
         return cur.rowcount > 0
 

@@ -48,8 +48,9 @@
                 <div class="field-hint">Comma-separated. Matches any keyword in the job title. Leave blank to see all open roles.</div>
             </div>
         </div>
-        <div style="margin-top: 20px;">
+        <div class="form-actions">
             <button type="submit" class="btn btn-primary">+ Add Alert & Check</button>
+            <button type="submit" formaction="{{ url_for('preview_watch') }}" class="btn btn-ghost">Preview Results</button>
         </div>
     </form>
 </div>
@@ -91,13 +92,24 @@
                 {% else %}
                     <span class="chip">all roles</span>
                 {% endif %}
+                <form action="/toggle-email/{{ w.id }}" method="POST" class="chip-form">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    {% if w.email_enabled %}
+                        <button type="submit" class="chip chip-button">pause email</button>
+                    {% else %}
+                        <button type="submit" class="chip chip-button warn">resume email</button>
+                    {% endif %}
+                </form>
                 {% if w.last_error %}
                     <span class="chip warn">last scan failed</span>
                 {% endif %}
             </div>
 
             {% if w.last_error %}
-            <div class="watch-error">Last scan issue: {{ w.last_error }}</div>
+            {% set diagnostic = w.last_error | scan_diagnostic %}
+            <div class="watch-error">
+                <strong>{{ diagnostic.title }}:</strong> {{ diagnostic.detail }}
+            </div>
             {% endif %}
 
         </div>
@@ -156,6 +168,7 @@
                         </div>
                     </div>
                     <div class="edit-watch-actions">
+                        <button type="submit" formaction="{{ url_for('preview_watch', watch_id=w.id) }}" class="btn btn-ghost btn-sm">Preview</button>
                         <button type="submit" class="btn btn-primary btn-sm">Save & Check</button>
                     </div>
                 </form>
@@ -186,6 +199,13 @@
     color: var(--text-faint);
     margin-bottom: 16px;
     margin-top: 8px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 20px;
 }
 
 .job-location-inline {
@@ -227,6 +247,21 @@
 .watch-empty {
     color: var(--text-faint);
     font-size: 13px;
+}
+
+.chip-form {
+    display: inline;
+    margin: 0;
+}
+
+.chip-button {
+    cursor: pointer;
+    font: inherit;
+}
+
+.chip-button:hover {
+    border-color: var(--accent);
+    color: var(--accent-light);
 }
 
 .watch-error {
@@ -319,6 +354,7 @@
 
 .edit-watch-actions {
     display: flex;
+    gap: 8px;
     justify-content: flex-start;
     margin-top: 12px;
 }

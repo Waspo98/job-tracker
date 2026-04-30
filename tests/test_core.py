@@ -73,6 +73,15 @@ class DatabaseBehaviorTests(unittest.TestCase):
 
         self.assertIsNone(existing)
 
+    def test_email_enabled_defaults_and_can_toggle(self):
+        watch = db.get_watch_for_user(self.watch_id, self.user['id'])
+        self.assertEqual(watch['email_enabled'], 1)
+
+        self.assertTrue(db.set_watch_email_enabled(self.watch_id, self.user['id'], False))
+
+        watch = db.get_watch_for_user(self.watch_id, self.user['id'])
+        self.assertEqual(watch['email_enabled'], 0)
+
 
 class ParsingAndSafetyTests(unittest.TestCase):
     def test_keyword_matching_is_case_insensitive_and_any_keyword(self):
@@ -84,6 +93,11 @@ class ParsingAndSafetyTests(unittest.TestCase):
         _, error = url_safety.validate_public_http_url('http://127.0.0.1:5000/admin')
 
         self.assertIsNotNone(error)
+
+    def test_scan_diagnostic_describes_common_failures(self):
+        diagnostic = main.scan_diagnostic('Could not fetch https://example.com/jobs: HTTP 404')
+
+        self.assertEqual(diagnostic['title'], 'Page not found')
 
     def test_custom_url_detects_greenhouse_board_links(self):
         class FakeResponse:
@@ -212,6 +226,40 @@ class FlaskRouteTests(unittest.TestCase):
         self.assertEqual(jobs[0]['title'], 'Product Engineer')
         self.assertIsNotNone(jobs[0]['notified_at'])
 
+    def test_preview_runs_check_without_saving_watch(self):
+        user, token = self._login()
+        calls = []
+        original_validate = main.validate_public_http_url
+        original_check = main.check_watch
+        self.addCleanup(lambda: setattr(main, 'validate_public_http_url', original_validate))
+        self.addCleanup(lambda: setattr(main, 'check_watch', original_check))
+
+        main.validate_public_http_url = lambda url: (url, None)
+
+        def fake_check(watch):
+            calls.append(dict(watch))
+            return [{
+                'job_id': 'job-1',
+                'title': 'Product Engineer',
+                'location': 'Remote',
+                'url': 'https://example.com/job-1',
+            }], None
+
+        main.check_watch = fake_check
+
+        response = self.client.post('/preview', data={
+            '_csrf_token': token,
+            'company_name': 'Preview Co',
+            'custom_url': 'https://example.com/careers',
+            'keywords': 'engineer',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Preview Co', response.data)
+        self.assertIn(b'Product Engineer', response.data)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(db.get_watches_for_user(user['id'])), 0)
+
     def test_edit_watch_updates_fields_and_runs_check(self):
         user, token = self._login()
         watch_id = db.add_watch(
@@ -261,6 +309,56 @@ class FlaskRouteTests(unittest.TestCase):
         self.assertEqual(updated['company_name'], 'New Co')
         self.assertEqual(updated['careers_url'], 'https://new.example/careers')
         self.assertEqual(updated['keywords'], 'designer')
+
+    def test_paused_email_saves_jobs_without_sending(self):
+        user, token = self._login()
+        watch_id = db.add_watch(
+            user['id'],
+            'Quiet Co',
+            'https://quiet.example/careers',
+            'custom',
+            None,
+            'engineer',
+        )
+        db.set_watch_email_enabled(watch_id, user['id'], False)
+
+        sent = []
+        original_check = main.check_watch
+        original_send = main.send_job_alert
+        self.addCleanup(lambda: setattr(main, 'check_watch', original_check))
+        self.addCleanup(lambda: setattr(main, 'send_job_alert', original_send))
+
+        main.check_watch = lambda watch: ([{
+            'job_id': 'job-quiet',
+            'title': 'Platform Engineer',
+            'location': 'Remote',
+            'url': 'https://quiet.example/job-quiet',
+        }], None)
+        main.send_job_alert = lambda *args, **kwargs: sent.append(args) or True
+
+        response = self.client.post(f'/check-watch/{watch_id}', data={'_csrf_token': token})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(sent, [])
+        jobs = db.get_jobs_for_watch(watch_id)
+        self.assertEqual(len(jobs), 1)
+        self.assertIsNotNone(jobs[0]['notified_at'])
+
+    def test_toggle_email_route_flips_watch_email_setting(self):
+        user, token = self._login()
+        watch_id = db.add_watch(
+            user['id'],
+            'Toggle Co',
+            'https://toggle.example/careers',
+            'custom',
+            None,
+            '',
+        )
+
+        response = self.client.post(f'/toggle-email/{watch_id}', data={'_csrf_token': token})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(db.get_watch_for_user(watch_id, user['id'])['email_enabled'], 0)
 
 
 if __name__ == '__main__':

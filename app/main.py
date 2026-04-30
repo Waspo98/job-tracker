@@ -109,6 +109,102 @@ def _validate_alert_input(company, url, keywords):
     return company, url, keywords, None
 
 
+def _row_value(row, key, default=None):
+    if row is None:
+        return default
+    try:
+        if key in row.keys():
+            return row[key]
+    except AttributeError:
+        pass
+    try:
+        return row.get(key, default)
+    except AttributeError:
+        return default
+
+
+def _email_enabled(watch):
+    return bool(_row_value(watch, 'email_enabled', 1))
+
+
+def _job_ids(jobs):
+    return [job['job_id'] for job in jobs]
+
+
+def _notify_for_new_jobs(watch, recipient_email, new_jobs):
+    if not new_jobs:
+        return 'none'
+    if not _email_enabled(watch):
+        db.mark_jobs_notified(watch['id'], _job_ids(new_jobs))
+        return 'paused'
+    sent = send_job_alert(recipient_email, watch['company_name'], new_jobs)
+    if sent:
+        db.mark_jobs_notified(watch['id'], _job_ids(new_jobs))
+        return 'sent'
+    return 'failed'
+
+
+def scan_diagnostic(error):
+    text = str(error or '').strip()
+    lower = text.lower()
+    if not text:
+        return {'title': 'No scan issue', 'detail': ''}
+    if 'http 404' in lower:
+        return {
+            'title': 'Page not found',
+            'detail': 'The careers URL returned HTTP 404. The company may have moved its jobs page.',
+        }
+    if 'http 403' in lower or 'forbidden' in lower:
+        return {
+            'title': 'Blocked by site',
+            'detail': 'The careers page refused the scraper request. This site may block automated checks.',
+        }
+    if 'http 429' in lower or 'too many requests' in lower:
+        return {
+            'title': 'Rate limited',
+            'detail': 'The site asked us to slow down. The next scheduled check may work.',
+        }
+    if 'only public careers page urls' in lower or 'embedded usernames' in lower:
+        return {
+            'title': 'URL blocked by safety checks',
+            'detail': 'Only public HTTP/HTTPS careers pages can be checked.',
+        }
+    if 'too many redirects' in lower:
+        return {
+            'title': 'Redirect loop',
+            'detail': 'The careers URL redirected too many times before reaching a page.',
+        }
+    if 'greenhouse slug' in lower:
+        return {
+            'title': 'Greenhouse board not found',
+            'detail': 'A Greenhouse board was detected, but Greenhouse did not recognize the board name.',
+        }
+    if 'lever slug' in lower:
+        return {
+            'title': 'Lever board not found',
+            'detail': 'A Lever board was detected, but Lever did not recognize the board name.',
+        }
+    if 'unsupported ats' in lower:
+        return {
+            'title': 'Unsupported job board',
+            'detail': 'This alert points at a job board the app does not know how to check yet.',
+        }
+    if 'could not fetch' in lower:
+        return {
+            'title': 'Could not reach page',
+            'detail': 'The careers page could not be fetched. The URL, network, or site may be temporarily unavailable.',
+        }
+    return {
+        'title': 'Scan failed',
+        'detail': text,
+    }
+
+
+@app.template_filter('scan_diagnostic')
+def scan_diagnostic_filter(error):
+    return scan_diagnostic(error)
+
+
 def validate_startup_config():
     if not SECRET_KEY:
         message = 'SECRET_KEY is not set; sessions will be invalidated on each container restart.'
@@ -189,7 +285,7 @@ def _watch_email(watch, fallback=None):
 def _run_checks_for_watches(watches, source='checks', fallback_email=None):
     watches = list(watches)
     logger.info("[%s] Running job checks", source)
-    stats = {'checked': 0, 'new_jobs': 0, 'expired': 0, 'errors': 0, 'email_failures': 0}
+    stats = {'checked': 0, 'new_jobs': 0, 'expired': 0, 'errors': 0, 'email_failures': 0, 'email_paused': 0}
 
     if not watches:
         logger.info("[%s] No active watches", source)
@@ -209,11 +305,11 @@ def _run_checks_for_watches(watches, source='checks', fallback_email=None):
         stats['new_jobs'] += len(new_jobs)
         logger.info("[%s] %s new, %s expired", source, len(new_jobs), expired)
         if new_jobs:
-            sent = send_job_alert(_watch_email(watch, fallback_email), watch['company_name'], new_jobs)
-            if sent:
-                db.mark_jobs_notified(watch['id'], [job['job_id'] for job in new_jobs])
-            else:
+            notification = _notify_for_new_jobs(watch, _watch_email(watch, fallback_email), new_jobs)
+            if notification == 'failed':
                 stats['email_failures'] += 1
+            elif notification == 'paused':
+                stats['email_paused'] += len(new_jobs)
 
     logger.info("[%s] Done", source)
     return stats
@@ -303,6 +399,55 @@ def dashboard():
     return render_template('dashboard.html', watch_data=watch_data, check_interval=CHECK_INTERVAL)
 
 
+@app.route('/preview', methods=['POST'])
+@app.route('/preview/<int:watch_id>', methods=['POST'])
+@login_required
+def preview_watch(watch_id=None):
+    existing_watch = None
+    if watch_id is not None:
+        existing_watch = db.get_watch_for_user(watch_id, current_user.id)
+        if not existing_watch:
+            flash('Alert not found.', 'error')
+            return redirect(url_for('dashboard') + '#alerts-section')
+
+    company, url, keywords, error = _validate_alert_input(
+        request.form.get('company_name'),
+        request.form.get('custom_url'),
+        request.form.get('keywords'),
+    )
+    if error:
+        flash(error, 'error')
+        anchor = f'#watch-{watch_id}' if watch_id else '#add-alert'
+        return redirect(url_for('dashboard') + anchor)
+
+    duplicate = db.get_active_watch_by_url(current_user.id, url, exclude_watch_id=watch_id)
+    if duplicate:
+        flash('You already have an active alert for that careers page.', 'info')
+        return redirect(url_for('dashboard') + f'#watch-{duplicate["id"]}')
+
+    preview = {
+        'id': watch_id or 0,
+        'company_name': company,
+        'careers_url': url,
+        'ats_type': 'custom',
+        'ats_slug': None,
+        'keywords': keywords,
+        'email_enabled': _row_value(existing_watch, 'email_enabled', 1),
+    }
+    jobs, error = check_watch(preview)
+    return render_template(
+        'preview.html',
+        company=company,
+        url=url,
+        keywords=keywords,
+        jobs=jobs,
+        error=error,
+        diagnostic=scan_diagnostic(error),
+        watch_id=watch_id,
+        editing=watch_id is not None,
+    )
+
+
 @app.route('/add-custom', methods=['POST'])
 @login_required
 def add_custom():
@@ -328,12 +473,16 @@ def add_custom():
         if error:
             flash(f'Added {company}, but the initial scan failed: {error}', 'info')
         elif new_jobs:
-            sent = send_job_alert(current_user.email, company, new_jobs)
-            if sent:
-                db.mark_jobs_notified(watch_id, [job['job_id'] for job in new_jobs])
+            notification = _notify_for_new_jobs(watch, current_user.email, new_jobs)
+            if notification == 'sent':
                 flash(
                     f'Added {company} — found {len(new_jobs)} matching listing{"s" if len(new_jobs) > 1 else ""} '
                     f'right away! Check your email.', 'success'
+                )
+            elif notification == 'paused':
+                flash(
+                    f'Added {company} — found {len(new_jobs)} matching listing{"s" if len(new_jobs) > 1 else ""}. '
+                    f'Email is paused, so they were saved without sending an alert.', 'success'
                 )
             else:
                 flash(
@@ -386,12 +535,17 @@ def edit_watch(watch_id):
     if error:
         flash(f'Updated {company}, but the check failed: {error}', 'info')
     elif new_jobs:
-        sent = send_job_alert(current_user.email, company, new_jobs)
-        if sent:
-            db.mark_jobs_notified(watch_id, [job['job_id'] for job in new_jobs])
+        notification = _notify_for_new_jobs(watch, current_user.email, new_jobs)
+        if notification == 'sent':
             flash(
                 f'Updated {company} and found {len(new_jobs)} new matching listing'
                 f'{"s" if len(new_jobs) > 1 else ""}. Check your email.',
+                'success',
+            )
+        elif notification == 'paused':
+            flash(
+                f'Updated {company} and found {len(new_jobs)} new matching listing'
+                f'{"s" if len(new_jobs) > 1 else ""}. Email is paused, so they were saved without sending an alert.',
                 'success',
             )
         else:
@@ -411,6 +565,23 @@ def edit_watch(watch_id):
             message += f' {expired} stale listing{"s" if expired != 1 else ""} removed.'
         flash(message, 'success')
 
+    return redirect(url_for('dashboard') + f'#watch-{watch_id}')
+
+
+@app.route('/toggle-email/<int:watch_id>', methods=['POST'])
+@login_required
+def toggle_email(watch_id):
+    watch = db.get_watch_for_user(watch_id, current_user.id)
+    if not watch:
+        flash('Alert not found.', 'error')
+        return redirect(url_for('dashboard') + '#alerts-section')
+
+    enabled = not _email_enabled(watch)
+    db.set_watch_email_enabled(watch_id, current_user.id, enabled)
+    if enabled:
+        flash(f'Email alerts resumed for {watch["company_name"]}.', 'success')
+    else:
+        flash(f'Email alerts paused for {watch["company_name"]}. New matches will still be saved here.', 'info')
     return redirect(url_for('dashboard') + f'#watch-{watch_id}')
 
 
@@ -438,6 +609,8 @@ def check_now():
         message += f' {stats["new_jobs"]} new listing{"s" if stats["new_jobs"] != 1 else ""} found.'
     if stats['expired']:
         message += f' {stats["expired"]} stale listing{"s" if stats["expired"] != 1 else ""} removed.'
+    if stats['email_paused']:
+        message += f' {stats["email_paused"]} listing{"s" if stats["email_paused"] != 1 else ""} saved without email.'
     if stats['email_failures']:
         flash(message + ' Some email alerts could not be sent and will be retried.', 'error')
     elif stats['errors']:
@@ -461,12 +634,16 @@ def check_watch_now(watch_id):
     if error:
         flash(f'Error checking {watch["company_name"]}: {error}', 'error')
     elif new_jobs:
-        sent = send_job_alert(current_user.email, watch['company_name'], new_jobs)
-        if sent:
-            db.mark_jobs_notified(watch['id'], [job['job_id'] for job in new_jobs])
+        notification = _notify_for_new_jobs(watch, current_user.email, new_jobs)
+        if notification == 'sent':
             flash(
                 f'Found {len(new_jobs)} new job{"s" if len(new_jobs) > 1 else ""} at {watch["company_name"]}! '
                 f'Check your email.', 'success'
+            )
+        elif notification == 'paused':
+            flash(
+                f'Found {len(new_jobs)} new job{"s" if len(new_jobs) > 1 else ""} at {watch["company_name"]}. '
+                f'Email is paused, so they were saved without sending an alert.', 'success'
             )
         else:
             flash(

@@ -8,11 +8,14 @@ It stores users, watches, and discovered jobs in SQLite. The active flow is inte
 
 - Per-user job watches
 - Edit saved watches and re-check immediately
+- Preview matching jobs before saving an alert
+- Pause email alerts while still tracking matches in the app
 - Keyword filtering by job title
 - SQLite persistence
 - Email alerts through Gmail SMTP/app passwords
 - Manual per-user checks and scheduled checks
 - Greenhouse and Lever board detection on custom careers pages
+- Friendly scan diagnostics for common scraper failures
 - CSRF protection for state-changing forms
 - Public URL validation for custom scraper targets
 - Docker image suitable for GitHub Container Registry
