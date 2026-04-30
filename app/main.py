@@ -2,12 +2,29 @@ import os
 import hmac
 import logging
 import secrets
+import warnings
 from flask import (
     Flask, render_template, request, redirect, url_for, flash, jsonify, session,
-    abort, send_from_directory, make_response,
+    abort, send_from_directory, make_response, has_request_context,
 )
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from apscheduler.schedulers.background import BackgroundScheduler
+
+try:
+    from authlib.deprecate import AuthlibDeprecationWarning
+
+    warnings.filterwarnings(
+        'ignore',
+        message='authlib.jose module is deprecated.*',
+        category=AuthlibDeprecationWarning,
+    )
+except ImportError:
+    AuthlibDeprecationWarning = None
+
+try:
+    from authlib.integrations.flask_client import OAuth
+except ImportError:  # Authlib is optional unless Authentik/OIDC is enabled.
+    OAuth = None
 
 import database as db
 from ats_clients import check_watch
@@ -26,6 +43,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 SECRET_KEY = os.environ.get('SECRET_KEY')
 app.secret_key = SECRET_KEY or os.urandom(24)
+oauth = OAuth(app) if OAuth else None
 
 
 def _env_int(name, default, min_value=None, max_value=None):
@@ -41,12 +59,47 @@ def _env_int(name, default, min_value=None, max_value=None):
     return value
 
 
+def _env_bool(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 CHECK_INTERVAL = _env_int('CHECK_INTERVAL_HOURS', 4, min_value=1, max_value=168)
 MAX_COMPANY_LENGTH = 120
 MAX_URL_LENGTH = 2048
 MAX_KEYWORDS_LENGTH = 300
 MAX_EMAIL_LENGTH = 254
 MAX_PASSWORD_LENGTH = 256
+APP_BASE_URL = os.environ.get('APP_BASE_URL', '').strip().rstrip('/')
+AUTHENTIK_ENABLED = _env_bool('AUTHENTIK_ENABLED') or _env_bool('OIDC_ENABLED')
+AUTHENTIK_ISSUER_URL = (
+    os.environ.get('AUTHENTIK_ISSUER_URL') or
+    os.environ.get('OIDC_ISSUER_URL') or
+    ''
+).strip()
+AUTHENTIK_CLIENT_ID = (
+    os.environ.get('AUTHENTIK_CLIENT_ID') or
+    os.environ.get('OIDC_CLIENT_ID') or
+    ''
+).strip()
+AUTHENTIK_CLIENT_SECRET = (
+    os.environ.get('AUTHENTIK_CLIENT_SECRET') or
+    os.environ.get('OIDC_CLIENT_SECRET') or
+    ''
+).strip()
+AUTHENTIK_SCOPES = os.environ.get('AUTHENTIK_SCOPES') or os.environ.get('OIDC_SCOPES') or 'openid email profile'
+AUTHENTIK_DISPLAY_NAME = os.environ.get('AUTHENTIK_DISPLAY_NAME', 'Authentik').strip() or 'Authentik'
+AUTHENTIK_LOGIN_BUTTON_TEXT = (
+    os.environ.get('AUTHENTIK_LOGIN_BUTTON_TEXT', '').strip() or
+    os.environ.get('OIDC_LOGIN_BUTTON_TEXT', '').strip() or
+    f'Log in with {AUTHENTIK_DISPLAY_NAME}'
+)
+AUTHENTIK_AUTO_REGISTER = _env_bool('AUTHENTIK_AUTO_REGISTER', True)
+AUTHENTIK_REQUIRE_VERIFIED_EMAIL = _env_bool('AUTHENTIK_REQUIRE_VERIFIED_EMAIL', True)
+AUTHENTIK_DISABLE_PASSWORD_LOGIN = _env_bool('AUTHENTIK_DISABLE_PASSWORD_LOGIN', False)
+_authentik_client = None
 _scheduler = None
 
 
@@ -60,7 +113,13 @@ def _get_csrf_token():
 
 @app.context_processor
 def inject_csrf_token():
-    return {'csrf_token': _get_csrf_token}
+    return {
+        'csrf_token': _get_csrf_token,
+        'authentik_enabled': AUTHENTIK_ENABLED,
+        'authentik_display_name': AUTHENTIK_DISPLAY_NAME,
+        'authentik_login_button_text': AUTHENTIK_LOGIN_BUTTON_TEXT,
+        'password_login_enabled': not AUTHENTIK_DISABLE_PASSWORD_LOGIN,
+    }
 
 
 @app.before_request
@@ -83,6 +142,80 @@ def _is_safe_redirect_target(target):
 
 def _is_valid_email(email):
     return email and len(email) <= MAX_EMAIL_LENGTH and '@' in email and '.' in email.rsplit('@', 1)[-1]
+
+
+def _external_url(endpoint, **values):
+    if has_request_context():
+        path = url_for(endpoint, **values)
+    else:
+        with app.test_request_context(base_url=APP_BASE_URL or 'http://localhost'):
+            path = url_for(endpoint, **values)
+    if APP_BASE_URL:
+        return f'{APP_BASE_URL}{path}'
+    if has_request_context():
+        return url_for(endpoint, _external=True, **values)
+    with app.test_request_context(base_url='http://localhost'):
+        return url_for(endpoint, _external=True, **values)
+
+
+def _authentik_metadata_url():
+    issuer = AUTHENTIK_ISSUER_URL.rstrip('/')
+    if issuer.endswith('/.well-known/openid-configuration'):
+        return issuer
+    return f'{issuer}/.well-known/openid-configuration'
+
+
+def _authentik_config_missing():
+    missing = []
+    if not AUTHENTIK_ISSUER_URL:
+        missing.append('AUTHENTIK_ISSUER_URL')
+    if not AUTHENTIK_CLIENT_ID:
+        missing.append('AUTHENTIK_CLIENT_ID')
+    if not AUTHENTIK_CLIENT_SECRET:
+        missing.append('AUTHENTIK_CLIENT_SECRET')
+    return missing
+
+
+def _get_authentik_client():
+    global _authentik_client
+    if not AUTHENTIK_ENABLED:
+        return None
+    if OAuth is None or oauth is None:
+        raise RuntimeError('AUTHENTIK_ENABLED requires authlib to be installed.')
+    missing = _authentik_config_missing()
+    if missing:
+        raise RuntimeError(f'Missing Authentik/OIDC config: {", ".join(missing)}')
+    if _authentik_client is None:
+        _authentik_client = oauth.register(
+            name='authentik',
+            client_id=AUTHENTIK_CLIENT_ID,
+            client_secret=AUTHENTIK_CLIENT_SECRET,
+            server_metadata_url=_authentik_metadata_url(),
+            client_kwargs={'scope': AUTHENTIK_SCOPES},
+        )
+    return _authentik_client
+
+
+def _truthy_claim(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes')
+
+
+def _get_or_create_authentik_user(userinfo):
+    email = (userinfo.get('email') or '').strip().lower()
+    if not _is_valid_email(email):
+        return None, f'{AUTHENTIK_DISPLAY_NAME} did not provide a valid email address.'
+
+    if AUTHENTIK_REQUIRE_VERIFIED_EMAIL and not _truthy_claim(userinfo.get('email_verified')):
+        return None, f'{AUTHENTIK_DISPLAY_NAME} did not mark this email address as verified.'
+
+    user_row = db.get_user_by_email(email)
+    if user_row:
+        return user_row, None
+    if not AUTHENTIK_AUTO_REGISTER:
+        return None, 'No local account exists for this email address.'
+    return db.create_sso_user(email)
 
 
 def _validate_alert_input(company, url, keywords):
@@ -214,6 +347,17 @@ def validate_startup_config():
         if os.environ.get('REQUIRE_SECRET_KEY') == '1':
             raise RuntimeError(message)
         logger.warning(message)
+
+    if AUTHENTIK_ENABLED:
+        if OAuth is None:
+            raise RuntimeError('AUTHENTIK_ENABLED requires authlib to be installed.')
+        missing = _authentik_config_missing()
+        if missing:
+            raise RuntimeError(f'Missing Authentik/OIDC config: {", ".join(missing)}')
+        logger.info(
+            'Authentik/OIDC enabled; callback URL should be %s',
+            _external_url('authentik_callback'),
+        )
 
     if not os.environ.get('SMTP_USER') or not os.environ.get('SMTP_PASS'):
         logger.warning('SMTP_USER/SMTP_PASS are not fully configured; email alerts will be retried until SMTP works.')
@@ -391,6 +535,9 @@ def run_user_checks(user_id, user_email):
 def register():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
+    if AUTHENTIK_DISABLE_PASSWORD_LOGIN:
+        flash('Local account registration is disabled. Use SSO to log in.', 'info')
+        return redirect(url_for('login'))
     if request.method == 'POST':
         email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
@@ -421,6 +568,9 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
     if request.method == 'POST':
+        if AUTHENTIK_DISABLE_PASSWORD_LOGIN:
+            flash('Password login is disabled. Use SSO to continue.', 'info')
+            return render_template('login.html')
         email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
         if not _is_valid_email(email) or not password:
@@ -435,6 +585,52 @@ def login():
             return redirect(url_for('dashboard'))
         flash('Invalid email or password.', 'error')
     return render_template('login.html')
+
+
+@app.route('/auth/authentik/login')
+def authentik_login():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+    if not AUTHENTIK_ENABLED:
+        flash('SSO login is not configured.', 'error')
+        return redirect(url_for('login'))
+
+    next_page = request.args.get('next')
+    session['authentik_next'] = next_page if _is_safe_redirect_target(next_page) else url_for('dashboard')
+    redirect_uri = _external_url('authentik_callback')
+    try:
+        return _get_authentik_client().authorize_redirect(redirect_uri)
+    except Exception:
+        logger.exception('Could not start Authentik/OIDC login')
+        flash('Could not start SSO login. Check the Authentik configuration.', 'error')
+        return redirect(url_for('login'))
+
+
+@app.route('/auth/authentik/callback')
+def authentik_callback():
+    if not AUTHENTIK_ENABLED:
+        flash('SSO login is not configured.', 'error')
+        return redirect(url_for('login'))
+
+    try:
+        client = _get_authentik_client()
+        token = client.authorize_access_token()
+        userinfo = token.get('userinfo') or client.userinfo(token=token)
+    except Exception:
+        logger.exception('Authentik/OIDC callback failed')
+        flash('SSO login failed. Please try again.', 'error')
+        return redirect(url_for('login'))
+
+    user_row, error = _get_or_create_authentik_user(dict(userinfo))
+    if error:
+        flash(error, 'error')
+        return redirect(url_for('login'))
+
+    login_user(User(user_row), remember=True)
+    next_page = session.pop('authentik_next', None)
+    if _is_safe_redirect_target(next_page):
+        return redirect(next_page)
+    return redirect(url_for('dashboard'))
 
 
 @app.route('/logout', methods=['POST'])

@@ -83,6 +83,13 @@ class DatabaseBehaviorTests(unittest.TestCase):
         watch = db.get_watch_for_user(self.watch_id, self.user['id'])
         self.assertEqual(watch['email_enabled'], 0)
 
+    def test_sso_user_can_be_created_without_known_password(self):
+        user, error = db.create_sso_user('sso@example.com')
+
+        self.assertIsNone(error)
+        self.assertEqual(user['email'], 'sso@example.com')
+        self.assertFalse(db.verify_password(user, 'password123'))
+
 
 class ParsingAndSafetyTests(unittest.TestCase):
     def test_keyword_matching_is_case_insensitive_and_any_keyword(self):
@@ -215,6 +222,109 @@ class FlaskRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers['Location'], '/')
+
+    def test_authentik_button_renders_when_enabled(self):
+        originals = (
+            main.AUTHENTIK_ENABLED,
+            main.AUTHENTIK_DISPLAY_NAME,
+            main.AUTHENTIK_LOGIN_BUTTON_TEXT,
+            main.AUTHENTIK_DISABLE_PASSWORD_LOGIN,
+        )
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_ENABLED', originals[0]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_DISPLAY_NAME', originals[1]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_LOGIN_BUTTON_TEXT', originals[2]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_DISABLE_PASSWORD_LOGIN', originals[3]))
+        main.AUTHENTIK_ENABLED = True
+        main.AUTHENTIK_DISPLAY_NAME = 'Authentik'
+        main.AUTHENTIK_LOGIN_BUTTON_TEXT = 'Log in with Overbay.app account'
+        main.AUTHENTIK_DISABLE_PASSWORD_LOGIN = False
+
+        html = self.client.get('/login?next=/jobs').get_data(as_text=True)
+
+        self.assertIn('Log in with Overbay.app account', html)
+        self.assertIn('/auth/authentik/login?next=/jobs', html)
+        self.assertIn('name="password"', html)
+        self.assertLess(html.index('name="password"'), html.index('Log in with Overbay.app account'))
+
+    def test_password_login_can_be_disabled_for_sso_only(self):
+        originals = (
+            main.AUTHENTIK_ENABLED,
+            main.AUTHENTIK_DISPLAY_NAME,
+            main.AUTHENTIK_LOGIN_BUTTON_TEXT,
+            main.AUTHENTIK_DISABLE_PASSWORD_LOGIN,
+        )
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_ENABLED', originals[0]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_DISPLAY_NAME', originals[1]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_LOGIN_BUTTON_TEXT', originals[2]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_DISABLE_PASSWORD_LOGIN', originals[3]))
+        main.AUTHENTIK_ENABLED = True
+        main.AUTHENTIK_DISPLAY_NAME = 'Authentik'
+        main.AUTHENTIK_LOGIN_BUTTON_TEXT = 'Log in with Overbay.app account'
+        main.AUTHENTIK_DISABLE_PASSWORD_LOGIN = True
+
+        html = self.client.get('/login').get_data(as_text=True)
+
+        self.assertIn('Log in with Overbay.app account', html)
+        self.assertNotIn('name="password"', html)
+        self.assertNotIn('Create one', html)
+
+    def test_authentik_startup_config_builds_callback_without_request(self):
+        originals = (
+            main.APP_BASE_URL,
+            main.AUTHENTIK_ENABLED,
+            main.AUTHENTIK_ISSUER_URL,
+            main.AUTHENTIK_CLIENT_ID,
+            main.AUTHENTIK_CLIENT_SECRET,
+        )
+        self.addCleanup(lambda: setattr(main, 'APP_BASE_URL', originals[0]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_ENABLED', originals[1]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_ISSUER_URL', originals[2]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_CLIENT_ID', originals[3]))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_CLIENT_SECRET', originals[4]))
+        main.APP_BASE_URL = 'https://jobs.example.com'
+        main.AUTHENTIK_ENABLED = True
+        main.AUTHENTIK_ISSUER_URL = 'https://auth.example.com/application/o/job-tracker/'
+        main.AUTHENTIK_CLIENT_ID = 'client-id'
+        main.AUTHENTIK_CLIENT_SECRET = 'client-secret'
+
+        main.validate_startup_config()
+
+        self.assertEqual(
+            main._external_url('authentik_callback'),
+            'https://jobs.example.com/auth/authentik/callback',
+        )
+
+    def test_authentik_user_requires_verified_email_by_default(self):
+        original_auto = main.AUTHENTIK_AUTO_REGISTER
+        original_verified = main.AUTHENTIK_REQUIRE_VERIFIED_EMAIL
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_AUTO_REGISTER', original_auto))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_REQUIRE_VERIFIED_EMAIL', original_verified))
+        main.AUTHENTIK_AUTO_REGISTER = True
+        main.AUTHENTIK_REQUIRE_VERIFIED_EMAIL = True
+
+        user, error = main._get_or_create_authentik_user({
+            'email': 'sso@example.com',
+            'email_verified': False,
+        })
+
+        self.assertIsNone(user)
+        self.assertIn('verified', error)
+
+    def test_authentik_user_auto_registers_verified_email(self):
+        original_auto = main.AUTHENTIK_AUTO_REGISTER
+        original_verified = main.AUTHENTIK_REQUIRE_VERIFIED_EMAIL
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_AUTO_REGISTER', original_auto))
+        self.addCleanup(lambda: setattr(main, 'AUTHENTIK_REQUIRE_VERIFIED_EMAIL', original_verified))
+        main.AUTHENTIK_AUTO_REGISTER = True
+        main.AUTHENTIK_REQUIRE_VERIFIED_EMAIL = True
+
+        user, error = main._get_or_create_authentik_user({
+            'email': 'SSO@Example.com',
+            'email_verified': True,
+        })
+
+        self.assertIsNone(error)
+        self.assertEqual(user['email'], 'sso@example.com')
 
     def test_add_custom_runs_initial_check(self):
         user, token = self._login()

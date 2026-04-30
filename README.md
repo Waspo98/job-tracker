@@ -19,6 +19,7 @@ It stores users, watches, and discovered jobs in SQLite. The active flow is inte
 - CSRF protection for state-changing forms
 - Public URL validation for custom scraper targets
 - Docker image suitable for GitHub Container Registry
+- Optional Authentik/OpenID Connect single sign-on
 
 ## Quick Start
 
@@ -36,6 +37,7 @@ REQUIRE_SECRET_KEY=1
 CHECK_INTERVAL_HOURS=4
 SMTP_USER=yourgmail@gmail.com
 SMTP_PASS=your-gmail-app-password
+APP_BASE_URL=https://jobs.example.com
 LOG_LEVEL=INFO
 ```
 
@@ -60,6 +62,36 @@ For Gmail alerts, create an app password:
 3. Put the generated password in `SMTP_PASS`.
 
 If SMTP is missing or fails, the app keeps discovered jobs pending for notification and retries on future checks.
+
+## Authentik SSO
+
+Job Tracker can use Authentik as an OpenID Connect provider while keeping local email/password login available by default.
+
+1. In Authentik, create an OAuth2/OpenID Connect provider for Job Tracker.
+2. Add this redirect URI to the Authentik provider:
+
+```text
+https://jobs.example.com/auth/authentik/callback
+```
+
+3. Configure the app environment:
+
+```env
+APP_BASE_URL=https://jobs.example.com
+AUTHENTIK_ENABLED=1
+AUTHENTIK_ISSUER_URL=https://auth.example.com/application/o/job-tracker/
+AUTHENTIK_CLIENT_ID=your-client-id
+AUTHENTIK_CLIENT_SECRET=your-client-secret
+AUTHENTIK_LOGIN_BUTTON_TEXT=Log in with your SSO account
+AUTHENTIK_SCOPES=openid email profile
+AUTHENTIK_AUTO_REGISTER=1
+AUTHENTIK_REQUIRE_VERIFIED_EMAIL=1
+AUTHENTIK_DISABLE_PASSWORD_LOGIN=0
+```
+
+`AUTHENTIK_ISSUER_URL` should be the Authentik application issuer URL. The app discovers the OpenID configuration at `/.well-known/openid-configuration` below that issuer. Authentik's [OAuth2/OpenID provider docs](https://docs.goauthentik.io/add-secure-apps/providers/oauth2/) list that endpoint under `/application/o/<application slug>/.well-known/openid-configuration`.
+
+When SSO succeeds, Job Tracker links users by verified email. If no local account exists and `AUTHENTIK_AUTO_REGISTER=1`, it creates one automatically with a random unusable password. Set `AUTHENTIK_LOGIN_BUTTON_TEXT` to control the provider button copy, and set `AUTHENTIK_DISABLE_PASSWORD_LOGIN=1` if you want the login screen to be SSO-only.
 
 ## Running Tests
 

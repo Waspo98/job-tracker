@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import logging
+import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'jobs.db')
@@ -140,6 +141,10 @@ def create_user(email, password):
         conn.execute("INSERT INTO users (email, password_hash) VALUES (?, ?)", (email.lower(), pw_hash))
         user = conn.execute("SELECT * FROM users WHERE email = ?", (email.lower(),)).fetchone()
         return user, None
+
+
+def create_sso_user(email):
+    return create_user(email, secrets.token_urlsafe(48))
 
 
 def get_user_by_email(email):
