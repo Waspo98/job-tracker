@@ -3,11 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0d1117">
+    <meta name="application-name" content="Job Tracker">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Job Tracker">
     <title>{% block title %}Job Tracker{% endblock %}</title>
+    <link rel="manifest" href="{{ url_for('webmanifest') }}">
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16.png">
-    <link rel="apple-touch-icon" href="/static/logo.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/static/logo-192.png">
+    <link rel="apple-touch-icon" href="/static/logo-192.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -159,6 +165,21 @@
             background: transparent;
             border: 0;
             cursor: pointer;
+        }
+
+        .install-app[hidden] {
+            display: none !important;
+        }
+
+        .install-app {
+            background: transparent;
+            border: 0;
+            font: inherit;
+            text-align: left;
+        }
+
+        .nav-mobile-link.install-app {
+            width: 100%;
         }
 
         .nav-user {
@@ -1063,6 +1084,7 @@
                 <span class="nav-user">{{ current_user.email }}</span>
                 <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">Dashboard</a>
                 <a href="/jobs" class="nav-link {% if request.path == '/jobs' %}active{% endif %}">All Jobs</a>
+                <button type="button" class="nav-link install-app" data-install-app hidden>Install</button>
                 <form action="/logout" method="POST" class="nav-form">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="nav-link">Log out</button>
@@ -1080,6 +1102,7 @@
             <div class="nav-mobile-email">{{ current_user.email }}</div>
             <a href="/" class="nav-mobile-link {% if request.path == '/' %}active{% endif %}">Dashboard</a>
             <a href="/jobs" class="nav-mobile-link {% if request.path == '/jobs' %}active{% endif %}">All Jobs</a>
+            <button type="button" class="nav-mobile-link install-app" data-install-app hidden>Install App</button>
             <form action="/logout" method="POST" class="nav-mobile-form">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="nav-mobile-link">Log out</button>
@@ -1111,6 +1134,24 @@
 
     function shouldReduceMotion() {
         return reducedMotion.matches;
+    }
+
+    let deferredInstallPrompt = null;
+
+    function setInstallButtonsVisible(visible) {
+        document.querySelectorAll('[data-install-app]').forEach((button) => {
+            button.hidden = !visible;
+        });
+    }
+
+    async function promptInstallApp() {
+        if (!deferredInstallPrompt) return;
+        deferredInstallPrompt.prompt();
+        const choice = await deferredInstallPrompt.userChoice;
+        if (choice.outcome === 'accepted') {
+            deferredInstallPrompt = null;
+            setInstallButtonsVisible(false);
+        }
     }
 
     function toggleMenu() {
@@ -1356,6 +1397,14 @@
             return;
         }
 
+        const installButton = event.target.closest('[data-install-app]');
+        if (installButton) {
+            event.preventDefault();
+            promptInstallApp();
+            closeMobileMenu();
+            return;
+        }
+
         if (event.target.matches('.app-modal')) {
             closeModal(event.target);
             return;
@@ -1388,6 +1437,25 @@
         event.preventDefault();
         submitAsyncForm(form, event.submitter);
     });
+
+    window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        setInstallButtonsVisible(true);
+    });
+
+    window.addEventListener('appinstalled', () => {
+        deferredInstallPrompt = null;
+        setInstallButtonsVisible(false);
+    });
+
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').catch((error) => {
+                console.warn('Service worker registration failed', error);
+            });
+        });
+    }
     </script>
 </body>
 </html>

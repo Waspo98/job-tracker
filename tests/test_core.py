@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -171,6 +172,35 @@ class FlaskRouteTests(unittest.TestCase):
         })
 
         self.assertEqual(response.status_code, 400)
+
+    def test_pwa_assets_are_served(self):
+        manifest_response = self.client.get('/manifest.webmanifest')
+        manifest = json.loads(manifest_response.get_data(as_text=True))
+        icon_sizes = {icon['sizes'] for icon in manifest['icons']}
+
+        self.assertEqual(manifest_response.status_code, 200)
+        self.assertIn('application/manifest+json', manifest_response.content_type)
+        self.assertEqual(manifest['start_url'], '/')
+        self.assertEqual(manifest['display'], 'standalone')
+        self.assertIn('192x192', icon_sizes)
+        self.assertIn('512x512', icon_sizes)
+
+        worker_response = self.client.get('/sw.js')
+        self.assertEqual(worker_response.status_code, 200)
+        self.assertEqual(worker_response.headers['Service-Worker-Allowed'], '/')
+        self.assertIn(b'CACHE_VERSION', worker_response.data)
+
+        offline_response = self.client.get('/offline')
+        self.assertEqual(offline_response.status_code, 200)
+        self.assertIn(b'You are offline', offline_response.data)
+
+        manifest_response.close()
+        worker_response.close()
+        offline_response.close()
+
+        login_page = self.client.get('/login').get_data(as_text=True)
+        self.assertIn('/manifest.webmanifest', login_page)
+        self.assertIn("serviceWorker.register('/sw.js')", login_page)
 
     def test_external_next_redirect_is_ignored(self):
         db.create_user('person@example.com', 'password123')

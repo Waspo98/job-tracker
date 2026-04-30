@@ -2,7 +2,10 @@ import os
 import hmac
 import logging
 import secrets
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
+from flask import (
+    Flask, render_template, request, redirect, url_for, flash, jsonify, session,
+    abort, send_from_directory, make_response,
+)
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -656,6 +659,32 @@ def delete(watch_id):
 def jobs():
     all_jobs = db.get_recent_jobs_for_user(current_user.id, limit=100)
     return render_template('jobs.html', jobs=all_jobs)
+
+
+@app.route('/manifest.webmanifest')
+def webmanifest():
+    return send_from_directory(
+        app.static_folder,
+        'manifest.webmanifest',
+        mimetype='application/manifest+json',
+    )
+
+
+@app.route('/sw.js')
+def service_worker():
+    response = make_response(send_from_directory(
+        app.static_folder,
+        'sw.js',
+        mimetype='application/javascript',
+    ))
+    response.headers['Service-Worker-Allowed'] = '/'
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
+
+
+@app.route('/offline')
+def offline():
+    return send_from_directory(app.static_folder, 'offline.html')
 
 
 @app.route('/check-now', methods=['POST'])
