@@ -76,7 +76,7 @@
             {{ w.company_name[0] | upper }}
             {% endif %}
         </div>
-        <div class="watch-info">
+        <div class="watch-summary">
             <div class="watch-company">{{ w.company_name }}</div>
             <div class="watch-created">
                 Created {{ w.created_at[:10] }}
@@ -100,6 +100,9 @@
             <div class="watch-error">Last scan issue: {{ w.last_error }}</div>
             {% endif %}
 
+        </div>
+
+        <div class="watch-body">
             {% if wd.jobs %}
             <div class="watch-jobs">
                 {% for job in wd.jobs %}
@@ -119,7 +122,7 @@
                 {% endif %}
             </div>
             {% else %}
-            <div style="margin-top: 9px; font-size: 13px; color: var(--text-faint);">No matching listings found yet — hit ↻ Check to run a scan now.</div>
+            <div class="watch-empty">No matching listings found yet — hit ↻ Check to run a scan now.</div>
             {% endif %}
         </div>
 
@@ -191,6 +194,41 @@
     margin-left: 4px;
 }
 
+.watch-card {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) 118px;
+    grid-template-areas:
+        "icon summary actions"
+        ". body actions";
+    align-items: start;
+    column-gap: 16px;
+    row-gap: 12px;
+    padding: 20px;
+}
+
+.watch-icon {
+    grid-area: icon;
+}
+
+.watch-summary {
+    grid-area: summary;
+    min-width: 0;
+}
+
+.watch-body {
+    grid-area: body;
+    min-width: 0;
+}
+
+.watch-body .watch-jobs {
+    margin-top: 0;
+}
+
+.watch-empty {
+    color: var(--text-faint);
+    font-size: 13px;
+}
+
 .watch-error {
     margin-top: 8px;
     color: #fbbf24;
@@ -198,6 +236,7 @@
 }
 
 .watch-actions {
+    grid-area: actions;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -205,6 +244,7 @@
     flex-shrink: 0;
     align-items: stretch;
     margin-left: auto;
+    align-self: start;
 }
 
 .watch-actions form,
@@ -295,13 +335,53 @@
         gap: 10px;
     }
 
+    .watch-card {
+        grid-template-columns: 38px minmax(0, 1fr);
+        grid-template-areas:
+            "icon summary"
+            "actions actions"
+            "body body";
+        column-gap: 12px;
+        row-gap: 14px;
+        padding: 16px;
+    }
+
     .watch-actions {
-        width: 112px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .action-btn {
+        justify-content: center;
+        padding: 0 8px !important;
     }
 
     .edit-watch-form {
         position: absolute;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
         width: min(520px, calc(100vw - 48px));
+    }
+
+    .job-row {
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 420px) {
+    .action-btn {
+        font-size: 11px !important;
+    }
+
+    .job-row {
+        flex-wrap: wrap;
+    }
+
+    .job-link {
+        margin-left: 15px;
     }
 }
 </style>
