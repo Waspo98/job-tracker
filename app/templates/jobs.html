@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}All Jobs — Job Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-label">// results</div>
+    <h1 class="page-title">All Found Jobs</h1>
+    <p class="page-sub">{{ jobs | length }} total matches across your watched companies.</p>
+</div>
+
+{% if jobs %}
+    {% set current_company = namespace(name='') %}
+    {% for job in jobs %}
+        {% if job.company_name != current_company.name %}
+            {% set current_company.name = job.company_name %}
+            <div class="section-title" style="margin-top: 28px;">{{ job.company_name }}</div>
+        {% endif %}
+        <div class="job-row" style="padding: 11px 16px; background: var(--surface); border-radius: 6px; margin-bottom: 7px; border: 1px solid var(--border);">
+            <div class="job-dot"></div>
+            <div class="job-title" style="font-weight:500;">{{ job.title }}</div>
+            <div class="job-location">{{ job.location }}</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--text-faint);white-space:nowrap;">{{ job.found_at[:10] }}</div>
+            {% if job.url %}<a href="{{ job.url }}" target="_blank" rel="noopener noreferrer" class="job-link">Apply →</a>{% endif %}
+        </div>
+    {% endfor %}
+{% else %}
+    <div class="empty">
+        <div class="empty-title">No jobs found yet</div>
+        <p>Add watches on the dashboard, then hit "Check All Now" to scan immediately.</p>
+    </div>
+{% endif %}
+{% endblock %}

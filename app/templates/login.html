@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Log In — Job Tracker{% endblock %}
+
+{% block content %}
+<div class="auth-wrap">
+    <div class="auth-card">
+        <div class="auth-logo">
+            <div class="auth-logo-mark">JT</div>
+            <div>
+                <div style="font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;">Job Tracker</div>
+                <div style="font-family: var(--mono); font-size: 11px; color: var(--accent-light);">jobs.overbay.app</div>
+            </div>
+        </div>
+
+        <div class="auth-title">Welcome back</div>
+        <div class="auth-sub" style="margin-bottom: 28px;">Log in to manage your job alerts.</div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('login', next=request.args.get('next')) if request.args.get('next') else url_for('login') }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="field" style="margin-bottom: 16px;">
+                <label>Email</label>
+                <input type="email" name="email" placeholder="you@example.com" required autofocus>
+            </div>
+            <div class="field" style="margin-bottom: 24px;">
+                <label>Password</label>
+                <input type="password" name="password" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">Log In →</button>
+        </form>
+
+        <div style="text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-faint);">
+            No account? <a href="/register" class="link">Create one</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

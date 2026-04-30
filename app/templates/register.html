@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Create Account — Job Tracker{% endblock %}
+
+{% block content %}
+<div class="auth-wrap">
+    <div class="auth-card">
+        <div class="auth-logo">
+            <div class="auth-logo-mark">JT</div>
+            <div>
+                <div style="font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;">Job Tracker</div>
+                <div style="font-family: var(--mono); font-size: 11px; color: var(--accent-light);">jobs.overbay.app</div>
+            </div>
+        </div>
+
+        <div class="auth-title">Create an account</div>
+        <div class="auth-sub" style="margin-bottom: 28px;">Start tracking jobs at companies you care about.</div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+
+        <form method="POST" action="/register">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="field" style="margin-bottom: 16px;">
+                <label>Email</label>
+                <input type="email" name="email" placeholder="you@example.com" required autofocus>
+            </div>
+            <div class="field" style="margin-bottom: 16px;">
+                <label>Password</label>
+                <input type="password" name="password" placeholder="Min. 8 characters" required>
+            </div>
+            <div class="field" style="margin-bottom: 24px;">
+                <label>Confirm Password</label>
+                <input type="password" name="confirm" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">Create Account →</button>
+        </form>
+
+        <div style="text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-faint);">
+            Already have an account? <a href="/login" class="link">Log in</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

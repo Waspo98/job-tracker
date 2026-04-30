@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Job Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-label">// dashboard</div>
+    <h1 class="page-title">Your Job Alerts</h1>
+    <p class="page-sub">Alerts check every {{ check_interval }} hours. New matches are emailed to your account address.</p>
+</div>
+
+{% set total_watches = watch_data | length %}
+{% set total_jobs = namespace(count=0) %}
+{% for wd in watch_data %}{% set total_jobs.count = total_jobs.count + wd.job_count %}{% endfor %}
+
+<div class="stats-row">
+    <div class="stat">
+        <div class="stat-value">{{ total_watches }}</div>
+        <div class="stat-label">Active Alerts</div>
+    </div>
+    <div class="stat">
+        <div class="stat-value">{{ total_jobs.count }}</div>
+        <div class="stat-label">Current Listings</div>
+    </div>
+    <div class="stat">
+        <div class="stat-value">{{ check_interval }}h</div>
+        <div class="stat-label">Check Interval</div>
+    </div>
+</div>
+
+<!-- ── Add Alert Form ── -->
+<div class="section-title" id="add-alert">Create a New Job Alert</div>
+<div class="card card-accent" style="margin-bottom: 40px;">
+    <form action="/add-custom" method="POST">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div class="form-grid">
+            <div class="field">
+                <label>Company Name</label>
+                <input type="text" name="company_name" placeholder="e.g. Medela" required>
+            </div>
+            <div class="field">
+                <label>Careers Page URL</label>
+                <input type="url" name="custom_url" placeholder="https://www.medela.com/careers" required>
+                <div class="field-hint">Paste the direct URL of the page that lists open positions.</div>
+            </div>
+            <div class="field form-full">
+                <label>Keywords <span style="font-weight:400; color:var(--text-faint);">(optional)</span></label>
+                <input type="text" name="keywords" placeholder="engineer, mechanical, product designer">
+                <div class="field-hint">Comma-separated. Matches any keyword in the job title. Leave blank to see all open roles.</div>
+            </div>
+        </div>
+        <div style="margin-top: 20px;">
+            <button type="submit" class="btn btn-primary">＋ Add Alert</button>
+        </div>
+    </form>
+</div>
+
+<!-- ── Current Job Alerts ── -->
+<div class="section-title-row" id="alerts-section">
+    <span>Current Job Alerts ({{ total_watches }})</span>
+    <form action="/check-now" method="POST" style="margin:0;">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">↻ Check All Now</button>
+    </form>
+</div>
+
+{% if watch_data %}
+    {% for wd in watch_data %}
+    {% set w = wd.watch %}
+    <div class="watch-card">
+        <div class="watch-icon">
+            {% if w.careers_url %}
+            <img src="https://www.google.com/s2/favicons?domain={{ w.careers_url | domain }}&sz=32"
+                 alt="{{ w.company_name[0] | upper }}"
+                 onerror="this.style.display='none'; this.parentElement.textContent='{{ w.company_name[0] | upper }}';">
+            {% else %}
+            {{ w.company_name[0] | upper }}
+            {% endif %}
+        </div>
+        <div class="watch-info">
+            <div class="watch-company">{{ w.company_name }}</div>
+            <div class="watch-created">
+                Created {{ w.created_at[:10] }}
+                {% if w.last_checked %} · Last checked {{ w.last_checked[:16] }}{% endif %}
+            </div>
+            <div class="watch-meta">
+                {% if w.careers_url %}
+                    <a href="{{ w.careers_url }}" target="_blank" rel="noopener noreferrer" class="chip" style="color:var(--accent-light);text-decoration:none;">{{ w.careers_url[:55] }}{% if w.careers_url|length > 55 %}…{% endif %} ↗</a>
+                {% endif %}
+                {% if w.keywords %}
+                    <span class="chip kw">🔍 {{ w.keywords }}</span>
+                {% else %}
+                    <span class="chip">all roles</span>
+                {% endif %}
+                {% if w.last_error %}
+                    <span class="chip warn">last scan failed</span>
+                {% endif %}
+            </div>
+
+            {% if w.last_error %}
+            <div class="watch-error">Last scan issue: {{ w.last_error }}</div>
+            {% endif %}
+
+            {% if wd.jobs %}
+            <div class="watch-jobs">
+                {% for job in wd.jobs %}
+                <div class="job-row">
+                    <div class="job-dot"></div>
+                    <div class="job-title">
+                        {{ job.title }}
+                        {% if job.location %}<span class="job-location-inline">· {{ job.location }}</span>{% endif %}
+                    </div>
+                    {% if job.url %}<a href="{{ job.url }}" target="_blank" rel="noopener noreferrer" class="job-link">Apply →</a>{% endif %}
+                </div>
+                {% endfor %}
+                {% if wd.job_count > 5 %}
+                <div style="padding-top: 7px; font-size: 12px; color: var(--text-faint); font-family: var(--mono);">
+                    +{{ wd.job_count - 5 }} more · <a href="/jobs" class="link">view all</a>
+                </div>
+                {% endif %}
+            </div>
+            {% else %}
+            <div style="margin-top: 9px; font-size: 13px; color: var(--text-faint);">No matching listings found yet — hit ↻ Check to run a scan now.</div>
+            {% endif %}
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px; flex-shrink:0; align-items:flex-end;">
+            <form action="/check-watch/{{ w.id }}" method="POST">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-ghost btn-sm">↻ Check</button>
+            </form>
+            <form action="/delete/{{ w.id }}" method="POST">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Remove this alert?')">✕ Remove</button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <div class="empty">
+        <div class="empty-title">No saved alerts</div>
+        <p>Add your first company above to get started.</p>
+    </div>
+{% endif %}
+
+<style>
+.section-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 16px;
+    margin-top: 8px;
+}
+
+.job-location-inline {
+    color: var(--text-faint);
+    font-size: 0.9em;
+    margin-left: 4px;
+}
+
+.watch-error {
+    margin-top: 8px;
+    color: #fbbf24;
+    font-size: 12px;
+}
+
+.btn-sm {
+    font-size: 12px !important;
+    padding: 5px 12px !important;
+}
+</style>
+
+{% endblock %}
