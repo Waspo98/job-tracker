@@ -83,6 +83,35 @@ class DatabaseBehaviorTests(unittest.TestCase):
         watch = db.get_watch_for_user(self.watch_id, self.user['id'])
         self.assertEqual(watch['email_enabled'], 0)
 
+    def test_watch_order_can_be_rearranged(self):
+        second_id = db.add_watch(
+            self.user['id'],
+            'Second Co',
+            'https://second.example/careers',
+            'custom',
+            None,
+            '',
+        )
+        third_id = db.add_watch(
+            self.user['id'],
+            'Third Co',
+            'https://third.example/careers',
+            'custom',
+            None,
+            '',
+        )
+
+        self.assertEqual(
+            [watch['id'] for watch in db.get_watches_for_user(self.user['id'])],
+            [third_id, second_id, self.watch_id],
+        )
+
+        self.assertTrue(db.reorder_watches(self.user['id'], [self.watch_id, third_id, second_id]))
+        self.assertEqual(
+            [watch['id'] for watch in db.get_watches_for_user(self.user['id'])],
+            [self.watch_id, third_id, second_id],
+        )
+
     def test_sso_user_can_be_created_without_known_password(self):
         user, error = db.create_sso_user('sso@example.com')
 
@@ -500,6 +529,24 @@ class FlaskRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(db.get_watch_for_user(watch_id, user['id'])['email_enabled'], 0)
 
+    def test_toggle_email_treats_null_as_enabled(self):
+        user, token = self._login()
+        watch_id = db.add_watch(
+            user['id'],
+            'Legacy Toggle Co',
+            'https://legacy-toggle.example/careers',
+            'custom',
+            None,
+            '',
+        )
+        with db.get_db() as conn:
+            conn.execute("UPDATE watches SET email_enabled = NULL WHERE id = ?", (watch_id,))
+
+        response = self.client.post(f'/toggle-email/{watch_id}', data={'_csrf_token': token})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(db.get_watch_for_user(watch_id, user['id'])['email_enabled'], 0)
+
     def test_toggle_email_can_return_updated_card_json(self):
         user, token = self._login()
         watch_id = db.add_watch(
@@ -578,6 +625,48 @@ class FlaskRouteTests(unittest.TestCase):
         self.assertEqual(payload['replace_target'], '#watch-list')
         self.assertIn('Async All Co', payload['html'])
         self.assertEqual(payload['stats']['alerts'], 1)
+
+    def test_reorder_watches_route_persists_card_order(self):
+        user, token = self._login()
+        first_id = db.add_watch(
+            user['id'],
+            'First Co',
+            'https://first.example/careers',
+            'custom',
+            None,
+            '',
+        )
+        second_id = db.add_watch(
+            user['id'],
+            'Second Co',
+            'https://second.example/careers',
+            'custom',
+            None,
+            '',
+        )
+        third_id = db.add_watch(
+            user['id'],
+            'Third Co',
+            'https://third.example/careers',
+            'custom',
+            None,
+            '',
+        )
+
+        response = self.client.post(
+            '/reorder-watches',
+            json={'watch_ids': [first_id, third_id, second_id]},
+            headers={'Accept': 'application/json', 'X-Requested-With': 'fetch', 'X-CSRF-Token': token},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(
+            [watch['id'] for watch in db.get_watches_for_user(user['id'])],
+            [first_id, third_id, second_id],
+        )
+        self.assertIn('First Co', payload['html'])
 
 
 if __name__ == '__main__':

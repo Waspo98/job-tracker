@@ -260,7 +260,10 @@ def _row_value(row, key, default=None):
 
 
 def _email_enabled(watch):
-    return bool(_row_value(watch, 'email_enabled', 1))
+    value = _row_value(watch, 'email_enabled', 1)
+    if value is None:
+        return True
+    return bool(value)
 
 
 def _job_ids(jobs):
@@ -829,7 +832,11 @@ def toggle_email(watch_id):
         return redirect(url_for('dashboard') + '#alerts-section')
 
     enabled = not _email_enabled(watch)
-    db.set_watch_email_enabled(watch_id, current_user.id, enabled)
+    if not db.set_watch_email_enabled(watch_id, current_user.id, enabled):
+        if _wants_json():
+            return jsonify({'ok': False, 'message': 'Could not update notification settings.', 'category': 'error'}), 500
+        flash('Could not update notification settings.', 'error')
+        return redirect(url_for('dashboard') + f'#watch-{watch_id}')
     if enabled:
         message = f'Email alerts resumed for {watch["company_name"]}.'
         category = 'success'
@@ -840,6 +847,31 @@ def toggle_email(watch_id):
         return _json_watch_response(watch_id, message, category)
     flash(message, category)
     return redirect(url_for('dashboard') + f'#watch-{watch_id}')
+
+
+@app.route('/reorder-watches', methods=['POST'])
+@login_required
+def reorder_watches():
+    data = request.get_json(silent=True) or {}
+    raw_watch_ids = data.get('watch_ids') or []
+    try:
+        watch_ids = [int(watch_id) for watch_id in raw_watch_ids]
+    except (TypeError, ValueError):
+        if _wants_json():
+            return jsonify({'ok': False, 'message': 'Invalid alert order.', 'category': 'error'}), 400
+        flash('Invalid alert order.', 'error')
+        return redirect(url_for('dashboard') + '#alerts-section')
+
+    if not db.reorder_watches(current_user.id, watch_ids):
+        if _wants_json():
+            return jsonify({'ok': False, 'message': 'Could not save that alert order.', 'category': 'error'}), 400
+        flash('Could not save that alert order.', 'error')
+        return redirect(url_for('dashboard') + '#alerts-section')
+
+    if _wants_json():
+        return _json_watch_list_response('Alert order saved.', 'success')
+    flash('Alert order saved.', 'success')
+    return redirect(url_for('dashboard') + '#alerts-section')
 
 
 @app.route('/delete/<int:watch_id>', methods=['POST'])

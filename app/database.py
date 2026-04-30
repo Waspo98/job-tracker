@@ -15,6 +15,29 @@ def get_db():
     return conn
 
 
+def _seed_watch_sort_order(conn):
+    rows = conn.execute(
+        "SELECT id, user_id FROM watches WHERE sort_order IS NULL "
+        "ORDER BY user_id, active DESC, created_at DESC, id DESC"
+    ).fetchall()
+    if not rows:
+        return
+
+    max_rows = conn.execute(
+        "SELECT user_id, COALESCE(MAX(sort_order), 0) AS max_order "
+        "FROM watches GROUP BY user_id"
+    ).fetchall()
+    next_order = {row['user_id']: row['max_order'] for row in max_rows}
+
+    for row in rows:
+        user_id = row['user_id']
+        next_order[user_id] = next_order.get(user_id, 0) + 1000
+        conn.execute(
+            "UPDATE watches SET sort_order = ? WHERE id = ?",
+            (next_order[user_id], row['id']),
+        )
+
+
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with get_db() as conn:
@@ -35,6 +58,7 @@ def init_db():
                 ats_slug TEXT,
                 keywords TEXT NOT NULL DEFAULT '',
                 email_enabled INTEGER DEFAULT 1,
+                sort_order INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_checked TIMESTAMP,
                 last_success_at TIMESTAMP,
@@ -101,7 +125,11 @@ def init_db():
         if 'email_enabled' not in watch_cols:
             logger.info("Migrating watches table to add email_enabled")
             conn.execute("ALTER TABLE watches ADD COLUMN email_enabled INTEGER DEFAULT 1")
-            conn.execute("UPDATE watches SET email_enabled = 1 WHERE email_enabled IS NULL")
+        conn.execute("UPDATE watches SET email_enabled = 1 WHERE email_enabled IS NULL")
+        if 'sort_order' not in watch_cols:
+            logger.info("Migrating watches table to add sort_order")
+            conn.execute("ALTER TABLE watches ADD COLUMN sort_order INTEGER")
+        _seed_watch_sort_order(conn)
 
         # Migration 2: add active column to found_jobs if missing
         cols = [r['name'] for r in conn.execute("PRAGMA table_info(found_jobs)").fetchall()]
@@ -121,6 +149,8 @@ def init_db():
         conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_watches_user_active
                 ON watches(user_id, active);
+            CREATE INDEX IF NOT EXISTS idx_watches_user_active_sort
+                ON watches(user_id, active, sort_order);
             CREATE INDEX IF NOT EXISTS idx_watches_user_url_active
                 ON watches(user_id, careers_url, active);
             CREATE INDEX IF NOT EXISTS idx_found_jobs_watch_active
@@ -166,7 +196,8 @@ def verify_password(user, password):
 def get_watches_for_user(user_id):
     with get_db() as conn:
         return conn.execute(
-            "SELECT * FROM watches WHERE user_id = ? AND active = 1 ORDER BY created_at DESC",
+            "SELECT * FROM watches WHERE user_id = ? AND active = 1 "
+            "ORDER BY sort_order ASC, created_at DESC, id DESC",
             (user_id,)
         ).fetchall()
 
@@ -183,17 +214,24 @@ def get_all_active_watches():
     with get_db() as conn:
         return conn.execute(
             "SELECT w.*, u.email as user_email FROM watches w "
-            "JOIN users u ON w.user_id = u.id WHERE w.active = 1"
+            "JOIN users u ON w.user_id = u.id WHERE w.active = 1 "
+            "ORDER BY w.user_id, w.sort_order ASC, w.created_at DESC, w.id DESC"
         ).fetchall()
 
 
 def add_watch(user_id, company_name, careers_url, ats_type, ats_slug, keywords):
     """Returns the new watch's id."""
     with get_db() as conn:
+        row = conn.execute(
+            "SELECT MIN(sort_order) AS first_order FROM watches WHERE user_id = ? AND active = 1",
+            (user_id,),
+        ).fetchone()
+        first_order = row['first_order'] if row else None
+        sort_order = first_order - 1000 if first_order is not None else 1000
         cur = conn.execute(
-            "INSERT INTO watches (user_id, company_name, careers_url, ats_type, ats_slug, keywords) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, company_name.strip(), careers_url, ats_type, ats_slug, keywords.strip())
+            "INSERT INTO watches (user_id, company_name, careers_url, ats_type, ats_slug, keywords, sort_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, company_name.strip(), careers_url, ats_type, ats_slug, keywords.strip(), sort_order)
         )
         return cur.lastrowid
 
@@ -230,6 +268,25 @@ def set_watch_email_enabled(watch_id, user_id, enabled):
             (1 if enabled else 0, watch_id, user_id)
         )
         return cur.rowcount > 0
+
+
+def reorder_watches(user_id, watch_ids):
+    watch_ids = [int(watch_id) for watch_id in watch_ids]
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id FROM watches WHERE user_id = ? AND active = 1",
+            (user_id,),
+        ).fetchall()
+        active_ids = {row['id'] for row in rows}
+        if set(watch_ids) != active_ids or len(watch_ids) != len(active_ids):
+            return False
+
+        for index, watch_id in enumerate(watch_ids, start=1):
+            conn.execute(
+                "UPDATE watches SET sort_order = ? WHERE id = ? AND user_id = ? AND active = 1",
+                (index * 1000, watch_id, user_id),
+            )
+        return True
 
 
 def delete_watch(watch_id, user_id):

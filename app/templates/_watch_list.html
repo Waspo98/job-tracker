@@ -1,4 +1,8 @@
-<div class="watch-list" id="watch-list">
+<div class="watch-list"
+     id="watch-list"
+     data-reorder-list
+     data-reorder-url="{{ url_for('reorder_watches') }}"
+     data-csrf-token="{{ csrf_token() }}">
     {% if watch_data %}
         {% for wd in watch_data %}
             {% include "_watch_card.html" %}

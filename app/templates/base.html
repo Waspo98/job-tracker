@@ -226,7 +226,6 @@
 
         /* Mobile dropdown menu */
         .nav-mobile-menu {
-            display: none;
             position: absolute;
             top: 58px;
             left: 0;
@@ -235,10 +234,33 @@
             border-bottom: 1px solid var(--border);
             backdrop-filter: blur(14px);
             z-index: 99;
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
             padding: 8px 0 12px;
+            pointer-events: none;
+            transform: translateY(-10px);
+            transform-origin: top center;
+            visibility: hidden;
+            transition:
+                max-height 220ms cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 160ms ease,
+                transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+                visibility 0s linear 220ms;
         }
 
-        .nav-mobile-menu.open { display: block; }
+        .nav-mobile-menu.open {
+            max-height: 320px;
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(0);
+            visibility: visible;
+            transition:
+                max-height 220ms cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 160ms ease,
+                transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+                visibility 0s;
+        }
 
         .nav-mobile-email {
             font-family: var(--mono);
@@ -774,6 +796,11 @@
             .app-modal[data-closing],
             .app-modal[data-closing]::backdrop {
                 animation: none;
+            }
+
+            .nav-mobile-menu,
+            .nav-mobile-menu.open {
+                transition: none;
             }
         }
 
@@ -1321,6 +1348,7 @@
         const action = submitter && submitter.formAction ? submitter.formAction : form.action;
         const method = (form.method || 'POST').toUpperCase();
         const data = new FormData(form);
+        const csrfToken = data.get('_csrf_token') || '';
 
         if (submitter && submitter.name) {
             data.append(submitter.name, submitter.value);
@@ -1338,13 +1366,18 @@
                 headers: {
                     'Accept': 'application/json',
                     'X-Requested-With': 'fetch',
+                    'X-CSRF-Token': csrfToken,
                 },
                 credentials: 'same-origin',
             });
 
             const contentType = response.headers.get('content-type') || '';
             if (!contentType.includes('application/json')) {
-                window.location.assign(response.url || window.location.href);
+                if (response.redirected && response.url && new URL(response.url).pathname === '/login') {
+                    window.location.assign(response.url);
+                    return;
+                }
+                showFlash('That action completed, but the card could not refresh automatically.', 'error');
                 return;
             }
 
@@ -1362,6 +1395,189 @@
             if (fragment && fragment.isConnected) fragment.removeAttribute('data-pending');
         }
     }
+
+    let draggedWatch = null;
+    let pointerReorder = null;
+
+    function getWatchOrder(list) {
+        return Array.from(list.querySelectorAll('[data-watch-fragment]'))
+            .map((item) => Number(item.dataset.watchId))
+            .filter((watchId) => Number.isFinite(watchId));
+    }
+
+    function getDragAfterElement(list, y) {
+        const items = Array.from(list.querySelectorAll('[data-watch-fragment]:not([data-dragging])'));
+
+        return items.reduce((closest, item) => {
+            const box = item.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset, element: item };
+            }
+            return closest;
+        }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+    }
+
+    async function saveWatchOrder(list) {
+        if (!list || !list.dataset.reorderUrl || list.dataset.savingOrder) return;
+
+        list.dataset.savingOrder = 'true';
+        try {
+            const response = await fetch(list.dataset.reorderUrl, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'fetch',
+                    'X-CSRF-Token': list.dataset.csrfToken || '',
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ watch_ids: getWatchOrder(list) }),
+            });
+
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.message || 'Could not save that alert order.');
+            }
+
+            updateStats(payload.stats);
+            showFlash(payload.message, payload.category || 'success');
+        } catch (error) {
+            showFlash(error.message || 'Could not save that alert order.', 'error');
+        } finally {
+            delete list.dataset.savingOrder;
+        }
+    }
+
+    function beginWatchDrag(item, list) {
+        if (!item || !list || getWatchOrder(list).length < 2) return false;
+
+        draggedWatch = item;
+        list.dataset.originalOrder = getWatchOrder(list).join(',');
+        list.setAttribute('data-reordering', '');
+        item.setAttribute('data-dragging', '');
+        return true;
+    }
+
+    function moveWatchDrag(list, y) {
+        if (!draggedWatch || !list || !list.contains(draggedWatch)) return;
+
+        const afterElement = getDragAfterElement(list, y);
+        if (afterElement) {
+            list.insertBefore(draggedWatch, afterElement);
+        } else {
+            list.appendChild(draggedWatch);
+        }
+    }
+
+    function finishWatchDrag(item, list) {
+        draggedWatch = null;
+        if (item) item.removeAttribute('data-dragging');
+
+        if (!list) return;
+        list.removeAttribute('data-reordering');
+        const oldOrder = list.dataset.originalOrder || '';
+        const newOrder = getWatchOrder(list).join(',');
+        delete list.dataset.originalOrder;
+
+        if (oldOrder && oldOrder !== newOrder) {
+            saveWatchOrder(list);
+        }
+    }
+
+    document.addEventListener('dragstart', (event) => {
+        const handle = event.target.closest('[data-drag-handle]');
+        if (!handle) return;
+
+        const item = handle.closest('[data-watch-fragment]');
+        const list = item && item.closest('[data-reorder-list]');
+        if (!beginWatchDrag(item, list)) {
+            event.preventDefault();
+            return;
+        }
+
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', item.dataset.watchId || '');
+    });
+
+    document.addEventListener('dragover', (event) => {
+        if (!draggedWatch) return;
+        const list = event.target.closest('[data-reorder-list]');
+        if (!list || !list.contains(draggedWatch)) return;
+
+        event.preventDefault();
+        moveWatchDrag(list, event.clientY);
+    });
+
+    document.addEventListener('drop', (event) => {
+        if (draggedWatch) event.preventDefault();
+    });
+
+    document.addEventListener('dragend', () => {
+        if (!draggedWatch) return;
+        const item = draggedWatch;
+        const list = item.closest('[data-reorder-list]');
+        finishWatchDrag(item, list);
+    });
+
+    document.addEventListener('pointerdown', (event) => {
+        if (event.pointerType === 'mouse') return;
+        const handle = event.target.closest('[data-drag-handle]');
+        if (!handle) return;
+
+        const item = handle.closest('[data-watch-fragment]');
+        const list = item && item.closest('[data-reorder-list]');
+        if (!item || !list || getWatchOrder(list).length < 2) return;
+
+        pointerReorder = {
+            active: false,
+            handle,
+            item,
+            list,
+            pointerId: event.pointerId,
+            startY: event.clientY,
+        };
+    });
+
+    document.addEventListener('pointermove', (event) => {
+        if (!pointerReorder || pointerReorder.pointerId !== event.pointerId) return;
+        const distance = Math.abs(event.clientY - pointerReorder.startY);
+        if (!pointerReorder.active) {
+            if (distance < 8) return;
+            if (!beginWatchDrag(pointerReorder.item, pointerReorder.list)) {
+                pointerReorder = null;
+                return;
+            }
+            pointerReorder.active = true;
+            if (pointerReorder.handle.setPointerCapture) {
+                pointerReorder.handle.setPointerCapture(event.pointerId);
+            }
+        }
+
+        event.preventDefault();
+        moveWatchDrag(pointerReorder.list, event.clientY);
+    }, { passive: false });
+
+    function finishPointerReorder(event) {
+        if (!pointerReorder || pointerReorder.pointerId !== event.pointerId) return;
+        const state = pointerReorder;
+        pointerReorder = null;
+
+        if (state.handle.releasePointerCapture) {
+            try {
+                state.handle.releasePointerCapture(event.pointerId);
+            } catch (error) {
+                // Pointer capture may already be released by the browser.
+            }
+        }
+
+        if (state.active) {
+            finishWatchDrag(state.item, state.list);
+        }
+    }
+
+    document.addEventListener('pointerup', finishPointerReorder);
+    document.addEventListener('pointercancel', finishPointerReorder);
 
     document.addEventListener('click', (event) => {
         const toggle = event.target.closest('.dropdown-toggle');

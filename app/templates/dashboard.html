@@ -94,6 +94,23 @@
     display: block;
 }
 
+.watch-list[data-reordering] {
+    user-select: none;
+}
+
+.watch-fragment[data-dragging] {
+    opacity: 0.52;
+}
+
+.watch-fragment[data-dragging] .watch-card {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-glow-strong), 0 18px 42px rgba(0, 0, 0, 0.28);
+}
+
+.watch-list[data-reordering] .watch-fragment:not([data-dragging]) .watch-card {
+    transition: transform 150ms ease, border-color 150ms ease;
+}
+
 .watch-fragment[data-pending] .watch-card {
     border-color: rgba(90, 126, 232, 0.58);
     box-shadow: 0 0 0 1px var(--accent-glow), 0 10px 28px rgba(0, 0, 0, 0.16);
@@ -112,14 +129,37 @@
 
 .watch-card {
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr) 40px;
+    grid-template-columns: 26px 38px minmax(0, 1fr) 40px;
     grid-template-areas:
-        "icon summary actions"
-        ". body actions";
+        "drag icon summary actions"
+        ". . body actions";
     align-items: start;
-    column-gap: 16px;
+    column-gap: 12px;
     row-gap: 12px;
     padding: 20px;
+}
+
+.watch-drag {
+    grid-area: drag;
+    align-self: start;
+}
+
+.drag-handle {
+    width: 26px;
+    height: 38px;
+    border-color: transparent;
+    color: var(--text-faint);
+    cursor: grab;
+    touch-action: none;
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+.drag-handle svg {
+    width: 16px;
+    height: 18px;
 }
 
 .watch-icon {
@@ -196,10 +236,10 @@
     }
 
     .watch-card {
-        grid-template-columns: 38px minmax(0, 1fr) 40px;
+        grid-template-columns: 26px 38px minmax(0, 1fr) 40px;
         grid-template-areas:
-            "icon summary actions"
-            "body body body";
+            "drag icon summary actions"
+            "body body body body";
         column-gap: 12px;
         row-gap: 14px;
         padding: 16px;
