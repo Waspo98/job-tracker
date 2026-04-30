@@ -96,30 +96,6 @@
                 {% endif %}
             </div>
 
-            <details class="edit-watch">
-                <summary>Edit alert</summary>
-                <form action="/edit/{{ w.id }}" method="POST" class="edit-watch-form">
-                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                    <div class="form-grid">
-                        <div class="field">
-                            <label>Company Name</label>
-                            <input type="text" name="company_name" value="{{ w.company_name }}" required>
-                        </div>
-                        <div class="field">
-                            <label>Careers Page URL</label>
-                            <input type="url" name="custom_url" value="{{ w.careers_url }}" required>
-                        </div>
-                        <div class="field form-full">
-                            <label>Keywords <span style="font-weight:400; color:var(--text-faint);">(optional)</span></label>
-                            <input type="text" name="keywords" value="{{ w.keywords }}" placeholder="engineer, mechanical, product designer">
-                        </div>
-                    </div>
-                    <div class="edit-watch-actions">
-                        <button type="submit" class="btn btn-primary btn-sm">Save & Check</button>
-                    </div>
-                </form>
-            </details>
-
             {% if w.last_error %}
             <div class="watch-error">Last scan issue: {{ w.last_error }}</div>
             {% endif %}
@@ -147,11 +123,34 @@
             {% endif %}
         </div>
 
-        <div style="display:flex; flex-direction:column; gap:6px; flex-shrink:0; align-items:flex-end;">
+        <div class="watch-actions">
             <form action="/check-watch/{{ w.id }}" method="POST">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-ghost btn-sm">↻ Check</button>
             </form>
+            <details class="edit-watch">
+                <summary class="btn btn-ghost btn-sm">Edit Alert</summary>
+                <form action="/edit/{{ w.id }}" method="POST" class="edit-watch-form">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="form-grid">
+                        <div class="field">
+                            <label>Company Name</label>
+                            <input type="text" name="company_name" value="{{ w.company_name }}" required>
+                        </div>
+                        <div class="field">
+                            <label>Careers Page URL</label>
+                            <input type="url" name="custom_url" value="{{ w.careers_url }}" required>
+                        </div>
+                        <div class="field form-full">
+                            <label>Keywords <span style="font-weight:400; color:var(--text-faint);">(optional)</span></label>
+                            <input type="text" name="keywords" value="{{ w.keywords }}" placeholder="engineer, mechanical, product designer">
+                        </div>
+                    </div>
+                    <div class="edit-watch-actions">
+                        <button type="submit" class="btn btn-primary btn-sm">Save & Check</button>
+                    </div>
+                </form>
+            </details>
             <form action="/delete/{{ w.id }}" method="POST">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Remove this alert?')">✕ Remove</button>
@@ -192,23 +191,43 @@
     font-size: 12px;
 }
 
+.watch-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+    align-items: flex-end;
+}
+
 .edit-watch {
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border);
+    position: relative;
+    margin: 0;
 }
 
 .edit-watch summary {
-    cursor: pointer;
+    list-style: none;
+}
+
+.edit-watch summary::-webkit-details-marker {
+    display: none;
+}
+
+.edit-watch[open] summary {
+    border-color: var(--accent);
     color: var(--accent-light);
-    font-family: var(--mono);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
 }
 
 .edit-watch-form {
-    margin-top: 12px;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    z-index: 20;
+    width: min(520px, calc(100vw - 48px));
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
 }
 
 .edit-watch-actions {
@@ -231,6 +250,17 @@
 
     .watch-card {
         flex-wrap: wrap;
+    }
+
+    .watch-actions {
+        align-items: stretch;
+        width: 100%;
+    }
+
+    .edit-watch-form {
+        position: static;
+        width: 100%;
+        margin-top: 8px;
     }
 }
 </style>
