@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — Job Tracker{% endblock %}
+{% block title %}Dashboard - Job Tracker{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -14,20 +14,19 @@
 
 <div class="stats-row">
     <div class="stat">
-        <div class="stat-value">{{ total_watches }}</div>
+        <div class="stat-value" data-stat="alerts">{{ total_watches }}</div>
         <div class="stat-label">Active Alerts</div>
     </div>
     <div class="stat">
-        <div class="stat-value">{{ total_jobs.count }}</div>
+        <div class="stat-value" data-stat="jobs">{{ total_jobs.count }}</div>
         <div class="stat-label">Current Listings</div>
     </div>
     <div class="stat">
-        <div class="stat-value">{{ check_interval }}h</div>
+        <div class="stat-value" data-stat="interval">{{ check_interval }}h</div>
         <div class="stat-label">Check Interval</div>
     </div>
 </div>
 
-<!-- ── Add Alert Form ── -->
 <div class="section-title" id="add-alert">Create a New Job Alert</div>
 <div class="card card-accent" style="margin-bottom: 40px;">
     <form action="/add-custom" method="POST">
@@ -49,192 +48,21 @@
             </div>
         </div>
         <div class="form-actions">
-            <button type="submit" class="btn btn-primary">+ Add Alert & Check</button>
+            <button type="submit" class="btn btn-primary">+ Add Alert &amp; Check</button>
             <button type="submit" formaction="{{ url_for('preview_watch') }}" class="btn btn-ghost">Preview Results</button>
         </div>
     </form>
 </div>
 
-<!-- ── Current Job Alerts ── -->
 <div class="section-title-row" id="alerts-section">
-    <span>Current Job Alerts ({{ total_watches }})</span>
-    <form action="/check-now" method="POST" style="margin:0;">
+    <span data-alert-count>Current Job Alerts ({{ total_watches }})</span>
+    <form action="/check-now" method="POST" style="margin:0;" data-async-form>
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-ghost btn-sm">↻ Check All Now</button>
+        <button type="submit" class="btn btn-ghost btn-sm" data-busy-label="Checking...">Check All Now</button>
     </form>
 </div>
 
-{% if watch_data %}
-    {% for wd in watch_data %}
-    {% set w = wd.watch %}
-    <div class="watch-card" id="watch-{{ w.id }}">
-        <div class="watch-icon">
-            {% if w.careers_url %}
-            <img src="https://www.google.com/s2/favicons?domain={{ w.careers_url | domain }}&sz=32"
-                 alt="{{ w.company_name[0] | upper }}"
-                 onerror="this.style.display='none'; this.parentElement.textContent='{{ w.company_name[0] | upper }}';">
-            {% else %}
-            {{ w.company_name[0] | upper }}
-            {% endif %}
-        </div>
-        <div class="watch-summary">
-            <div class="watch-company">{{ w.company_name }}</div>
-            <div class="watch-created">
-                Created {{ w.created_at[:10] }}
-                {% if w.last_checked %} · Last checked {{ w.last_checked[:16] }}{% endif %}
-            </div>
-            <div class="watch-meta">
-                {% if w.careers_url %}
-                    <a href="{{ w.careers_url }}" target="_blank" rel="noopener noreferrer" class="chip" style="color:var(--accent-light);text-decoration:none;">{{ w.careers_url[:55] }}{% if w.careers_url|length > 55 %}…{% endif %} ↗</a>
-                {% endif %}
-                {% if w.keywords %}
-                    <span class="chip kw">🔍 {{ w.keywords }}</span>
-                {% else %}
-                    <span class="chip">all roles</span>
-                {% endif %}
-                {% if not w.email_enabled %}
-                    <span class="chip warn">notifications paused</span>
-                {% endif %}
-                {% if w.last_error %}
-                    <span class="chip warn">last scan failed</span>
-                {% endif %}
-            </div>
-
-            {% if w.last_error %}
-            {% set diagnostic = w.last_error | scan_diagnostic %}
-            <div class="watch-error">
-                <strong>{{ diagnostic.title }}:</strong> {{ diagnostic.detail }}
-            </div>
-            {% endif %}
-
-        </div>
-
-        <div class="watch-body">
-            {% if wd.jobs %}
-            <div class="watch-jobs">
-                {% for job in wd.jobs %}
-                <div class="job-row">
-                    <div class="job-dot"></div>
-                    <div class="job-title">
-                        {{ job.title }}
-                        {% if job.location %}<span class="job-location-inline">· {{ job.location }}</span>{% endif %}
-                    </div>
-                    {% if job.url %}<a href="{{ job.url }}" target="_blank" rel="noopener noreferrer" class="job-link">Apply →</a>{% endif %}
-                </div>
-                {% endfor %}
-                {% if wd.job_count > 5 %}
-                <div style="padding-top: 7px; font-size: 12px; color: var(--text-faint); font-family: var(--mono);">
-                    +{{ wd.job_count - 5 }} more · <a href="/jobs" class="link">view all</a>
-                </div>
-                {% endif %}
-            </div>
-            {% else %}
-            <div class="watch-empty">No matching listings found yet — hit ↻ Check to run a scan now.</div>
-            {% endif %}
-        </div>
-
-        <div class="watch-actions">
-            <details class="dropdown card-menu">
-                <summary class="icon-btn dropdown-toggle" aria-label="Alert settings for {{ w.company_name }}" aria-haspopup="menu">
-                    <svg class="kebab-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <circle cx="12" cy="5" r="1.8" />
-                        <circle cx="12" cy="12" r="1.8" />
-                        <circle cx="12" cy="19" r="1.8" />
-                    </svg>
-                </summary>
-                <div class="dropdown-panel menu-list card-menu-panel" role="menu">
-                    <form action="/check-watch/{{ w.id }}" method="POST">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="menu-item" role="menuitem">
-                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M3 12a9 9 0 0 1 15.5-6.2" />
-                                <path d="M18 3v5h-5" />
-                                <path d="M21 12a9 9 0 0 1-15.5 6.2" />
-                                <path d="M6 21v-5h5" />
-                            </svg>
-                            <span>Check</span>
-                        </button>
-                    </form>
-                    <form action="/toggle-email/{{ w.id }}" method="POST">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="menu-item" role="menuitem">
-                            {% if w.email_enabled %}
-                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
-                                <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-                                <path d="M4 4l16 16" />
-                            </svg>
-                            <span>Pause Notifications</span>
-                            {% else %}
-                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
-                                <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-                            </svg>
-                            <span>Resume Notifications</span>
-                            {% endif %}
-                        </button>
-                    </form>
-                    <button type="button" class="menu-item" role="menuitem" data-modal-target="edit-watch-{{ w.id }}">
-                        <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M12 20h9" />
-                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                        </svg>
-                        <span>Edit</span>
-                    </button>
-                    <form action="/delete/{{ w.id }}" method="POST">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="menu-item menu-item-danger" role="menuitem" onclick="return confirm('Delete this alert?')">
-                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M3 6h18" />
-                                <path d="M8 6V4h8v2" />
-                                <path d="M19 6l-1 14H6L5 6" />
-                                <path d="M10 11v5" />
-                                <path d="M14 11v5" />
-                            </svg>
-                            <span>Delete</span>
-                        </button>
-                    </form>
-                </div>
-            </details>
-        </div>
-    </div>
-    <dialog class="app-modal edit-modal" id="edit-watch-{{ w.id }}">
-        <div class="modal-header">
-            <div>
-                <div class="modal-title">Edit {{ w.company_name }}</div>
-                <div class="modal-sub">Save changes to run a fresh check.</div>
-            </div>
-            <button type="button" class="modal-close" data-modal-close aria-label="Close edit dialog">&times;</button>
-        </div>
-        <form action="/edit/{{ w.id }}" method="POST" class="modal-body">
-            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-            <div class="form-grid">
-                <div class="field">
-                    <label>Company Name</label>
-                    <input type="text" name="company_name" value="{{ w.company_name }}" required>
-                </div>
-                <div class="field">
-                    <label>Careers Page URL</label>
-                    <input type="url" name="custom_url" value="{{ w.careers_url }}" required>
-                </div>
-                <div class="field form-full">
-                    <label>Keywords <span style="font-weight:400; color:var(--text-faint);">(optional)</span></label>
-                    <input type="text" name="keywords" value="{{ w.keywords }}" placeholder="engineer, mechanical, product designer">
-                </div>
-            </div>
-            <div class="modal-actions">
-                <button type="submit" formaction="{{ url_for('preview_watch', watch_id=w.id) }}" class="btn btn-ghost">Preview</button>
-                <button type="submit" class="btn btn-primary">Save & Check</button>
-            </div>
-        </form>
-    </dialog>
-    {% endfor %}
-{% else %}
-    <div class="empty">
-        <div class="empty-title">No saved alerts</div>
-        <p>Add your first company above to get started.</p>
-    </div>
-{% endif %}
+{% include "_watch_list.html" %}
 
 <style>
 .section-title-row {
@@ -255,6 +83,25 @@
     gap: 10px;
     flex-wrap: wrap;
     margin-top: 20px;
+}
+
+.watch-list {
+    display: grid;
+    gap: 10px;
+}
+
+.watch-fragment {
+    display: block;
+}
+
+.watch-fragment[data-pending] .watch-card {
+    border-color: rgba(90, 126, 232, 0.58);
+    box-shadow: 0 0 0 1px var(--accent-glow), 0 10px 28px rgba(0, 0, 0, 0.16);
+    opacity: 0.82;
+}
+
+.watch-fragment[data-fresh] .watch-card {
+    animation: cardRefresh 260ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .job-location-inline {
@@ -321,6 +168,24 @@
 
 .kebab-icon {
     fill: currentColor;
+    transition: transform 0.16s ease;
+}
+
+.card-menu[open] .kebab-icon {
+    transform: rotate(90deg) scale(0.92);
+}
+
+@keyframes cardRefresh {
+    from {
+        transform: translateY(5px);
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent-glow-strong);
+    }
+    to {
+        transform: translateY(0);
+        border-color: var(--border);
+        box-shadow: none;
+    }
 }
 
 @media (max-width: 640px) {

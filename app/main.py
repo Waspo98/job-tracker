@@ -224,6 +224,61 @@ def domain_from_url(url):
     except Exception:
         return ''
 
+
+def _wants_json():
+    return (
+        request.headers.get('X-Requested-With') == 'fetch' or
+        'application/json' in request.headers.get('Accept', '')
+    )
+
+
+def _watch_data_for_row(watch):
+    jobs = db.get_jobs_for_watch(watch['id'])
+    return {'watch': watch, 'job_count': len(jobs), 'jobs': list(jobs[:5])}
+
+
+def _watch_data_for_user(user_id):
+    return [_watch_data_for_row(watch) for watch in db.get_watches_for_user(user_id)]
+
+
+def _dashboard_stats(watch_data):
+    return {
+        'alerts': len(watch_data),
+        'jobs': sum(wd['job_count'] for wd in watch_data),
+        'interval': CHECK_INTERVAL,
+    }
+
+
+def _json_watch_response(watch_id, message, category='success', status=200):
+    watch = db.get_watch_for_user(watch_id, current_user.id)
+    if not watch:
+        return jsonify({'ok': False, 'message': 'Alert not found.', 'category': 'error'}), 404
+
+    watch_data = _watch_data_for_row(watch)
+    all_watch_data = _watch_data_for_user(current_user.id)
+    return jsonify({
+        'ok': status < 400,
+        'message': message,
+        'category': category,
+        'html': render_template('_watch_card.html', wd=watch_data),
+        'replace_target': f'#watch-fragment-{watch_id}',
+        'replace_mode': 'outer',
+        'stats': _dashboard_stats(all_watch_data),
+    }), status
+
+
+def _json_watch_list_response(message, category='success', status=200):
+    watch_data = _watch_data_for_user(current_user.id)
+    return jsonify({
+        'ok': status < 400,
+        'message': message,
+        'category': category,
+        'html': render_template('_watch_list.html', watch_data=watch_data),
+        'replace_target': '#watch-list',
+        'replace_mode': 'outer',
+        'stats': _dashboard_stats(watch_data),
+    }), status
+
 # ── Flask-Login ───────────────────────────────────────────────────────────────
 
 login_manager = LoginManager()
@@ -391,11 +446,7 @@ def logout():
 @app.route('/')
 @login_required
 def dashboard():
-    watches = db.get_watches_for_user(current_user.id)
-    watch_data = []
-    for w in watches:
-        jobs = db.get_jobs_for_watch(w['id'])
-        watch_data.append({'watch': w, 'job_count': len(jobs), 'jobs': list(jobs[:5])})
+    watch_data = _watch_data_for_user(current_user.id)
     return render_template('dashboard.html', watch_data=watch_data, check_interval=CHECK_INTERVAL)
 
 
@@ -573,15 +624,22 @@ def edit_watch(watch_id):
 def toggle_email(watch_id):
     watch = db.get_watch_for_user(watch_id, current_user.id)
     if not watch:
+        if _wants_json():
+            return jsonify({'ok': False, 'message': 'Alert not found.', 'category': 'error'}), 404
         flash('Alert not found.', 'error')
         return redirect(url_for('dashboard') + '#alerts-section')
 
     enabled = not _email_enabled(watch)
     db.set_watch_email_enabled(watch_id, current_user.id, enabled)
     if enabled:
-        flash(f'Email alerts resumed for {watch["company_name"]}.', 'success')
+        message = f'Email alerts resumed for {watch["company_name"]}.'
+        category = 'success'
     else:
-        flash(f'Email alerts paused for {watch["company_name"]}. New matches will still be saved here.', 'info')
+        message = f'Email alerts paused for {watch["company_name"]}. New matches will still be saved here.'
+        category = 'info'
+    if _wants_json():
+        return _json_watch_response(watch_id, message, category)
+    flash(message, category)
     return redirect(url_for('dashboard') + f'#watch-{watch_id}')
 
 
@@ -612,11 +670,16 @@ def check_now():
     if stats['email_paused']:
         message += f' {stats["email_paused"]} listing{"s" if stats["email_paused"] != 1 else ""} saved without email.'
     if stats['email_failures']:
-        flash(message + ' Some email alerts could not be sent and will be retried.', 'error')
+        message += ' Some email alerts could not be sent and will be retried.'
+        category = 'error'
     elif stats['errors']:
-        flash(message + ' Some alerts could not be checked.', 'info')
+        message += ' Some alerts could not be checked.'
+        category = 'info'
     else:
-        flash(message, 'success')
+        category = 'success'
+    if _wants_json():
+        return _json_watch_list_response(message, category)
+    flash(message, category)
     return redirect(url_for('dashboard'))
 
 
@@ -626,38 +689,47 @@ def check_watch_now(watch_id):
     watches = db.get_watches_for_user(current_user.id)
     watch = next((w for w in watches if w['id'] == watch_id), None)
     if not watch:
+        if _wants_json():
+            return jsonify({'ok': False, 'message': 'Alert not found.', 'category': 'error'}), 404
         flash('Alert not found.', 'error')
         return redirect(url_for('dashboard'))
 
     new_jobs, expired, error = _run_check(watch)
 
     if error:
-        flash(f'Error checking {watch["company_name"]}: {error}', 'error')
+        message = f'Error checking {watch["company_name"]}: {error}'
+        category = 'error'
     elif new_jobs:
         notification = _notify_for_new_jobs(watch, current_user.email, new_jobs)
         if notification == 'sent':
-            flash(
+            message = (
                 f'Found {len(new_jobs)} new job{"s" if len(new_jobs) > 1 else ""} at {watch["company_name"]}! '
-                f'Check your email.', 'success'
+                f'Check your email.'
             )
+            category = 'success'
         elif notification == 'paused':
-            flash(
+            message = (
                 f'Found {len(new_jobs)} new job{"s" if len(new_jobs) > 1 else ""} at {watch["company_name"]}. '
-                f'Email is paused, so they were saved without sending an alert.', 'success'
+                f'Email is paused, so they were saved without sending an alert.'
             )
+            category = 'success'
         else:
-            flash(
+            message = (
                 f'Found {len(new_jobs)} new job{"s" if len(new_jobs) > 1 else ""} at {watch["company_name"]}, '
-                f'but the email alert could not be sent. The app will retry on the next check.', 'error'
+                f'but the email alert could not be sent. The app will retry on the next check.'
             )
+            category = 'error'
     else:
         active_count = len(db.get_jobs_for_watch(watch_id))
-        msg = f'{watch["company_name"]}: {active_count} current listing{"s" if active_count != 1 else ""}'
+        message = f'{watch["company_name"]}: {active_count} current listing{"s" if active_count != 1 else ""}'
         if expired:
-            msg += f', {expired} removed since last check'
-        msg += ' — no new postings.'
-        flash(msg, 'info')
+            message += f', {expired} removed since last check'
+        message += ' - no new postings.'
+        category = 'info'
 
+    if _wants_json():
+        return _json_watch_response(watch_id, message, category)
+    flash(message, category)
     return redirect(url_for('dashboard') + '#alerts-section')
 
 

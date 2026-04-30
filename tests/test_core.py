@@ -360,6 +360,85 @@ class FlaskRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(db.get_watch_for_user(watch_id, user['id'])['email_enabled'], 0)
 
+    def test_toggle_email_can_return_updated_card_json(self):
+        user, token = self._login()
+        watch_id = db.add_watch(
+            user['id'],
+            'Async Co',
+            'https://async.example/careers',
+            'custom',
+            None,
+            '',
+        )
+
+        response = self.client.post(
+            f'/toggle-email/{watch_id}',
+            data={'_csrf_token': token},
+            headers={'Accept': 'application/json', 'X-Requested-With': 'fetch'},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(payload['replace_target'], f'#watch-fragment-{watch_id}')
+        self.assertIn('notifications paused', payload['html'])
+        self.assertEqual(payload['stats']['alerts'], 1)
+        self.assertEqual(db.get_watch_for_user(watch_id, user['id'])['email_enabled'], 0)
+
+    def test_check_watch_can_return_updated_card_json(self):
+        user, token = self._login()
+        watch_id = db.add_watch(
+            user['id'],
+            'Async Check Co',
+            'https://async-check.example/careers',
+            'custom',
+            None,
+            'engineer',
+        )
+        original_check = main.check_watch
+        self.addCleanup(lambda: setattr(main, 'check_watch', original_check))
+        main.check_watch = lambda watch: ([], None)
+
+        response = self.client.post(
+            f'/check-watch/{watch_id}',
+            data={'_csrf_token': token},
+            headers={'Accept': 'application/json', 'X-Requested-With': 'fetch'},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(payload['replace_target'], f'#watch-fragment-{watch_id}')
+        self.assertIn('Async Check Co', payload['html'])
+        self.assertEqual(payload['stats']['jobs'], 0)
+
+    def test_check_all_can_return_updated_list_json(self):
+        user, token = self._login()
+        db.add_watch(
+            user['id'],
+            'Async All Co',
+            'https://async-all.example/careers',
+            'custom',
+            None,
+            '',
+        )
+        original_check = main.check_watch
+        self.addCleanup(lambda: setattr(main, 'check_watch', original_check))
+        main.check_watch = lambda watch: ([], None)
+
+        response = self.client.post(
+            '/check-now',
+            data={'_csrf_token': token},
+            headers={'Accept': 'application/json', 'X-Requested-With': 'fetch'},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(payload['replace_target'], '#watch-list')
+        self.assertIn('Async All Co', payload['html'])
+        self.assertEqual(payload['stats']['alerts'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()

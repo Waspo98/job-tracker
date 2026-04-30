@@ -435,6 +435,12 @@
 
         .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
+        .btn[disabled],
+        .menu-item[disabled] {
+            opacity: 0.62;
+            cursor: wait;
+        }
+
         .btn-ghost {
             background: transparent;
             color: var(--text-dim);
@@ -562,6 +568,8 @@
             --dropdown-x: 0;
             --dropdown-width: 240px;
             --dropdown-min-width: 180px;
+            --dropdown-clip-left: calc(100% - 36px);
+            --dropdown-clip-right: 0;
             position: absolute;
             top: calc(100% + 8px);
             right: 0;
@@ -573,12 +581,15 @@
             border-radius: var(--radius);
             box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
             transform-origin: top right;
-            animation: dropdownZoomIn 140ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            clip-path: inset(0 var(--dropdown-clip-right) calc(100% - 36px) var(--dropdown-clip-left) round 5px);
+            animation: dropdownExpand 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
         .dropdown-align-start .dropdown-panel {
             left: 0;
             right: auto;
+            --dropdown-clip-left: 0;
+            --dropdown-clip-right: calc(100% - 36px);
             transform-origin: top left;
         }
 
@@ -590,35 +601,42 @@
         }
 
         .dropdown[data-closing] .dropdown-panel {
-            animation: dropdownZoomOut 110ms ease-in forwards;
+            animation: dropdownCollapse 135ms ease-in forwards;
         }
 
-        @keyframes dropdownZoomIn {
+        @keyframes dropdownExpand {
             from {
                 opacity: 0;
-                transform: translateX(var(--dropdown-x)) translateY(-4px) scale(0.96);
+                clip-path: inset(0 var(--dropdown-clip-right) calc(100% - 36px) var(--dropdown-clip-left) round 5px);
+                transform: translateX(var(--dropdown-x)) translateY(-7px) scale(0.88);
             }
             to {
                 opacity: 1;
+                clip-path: inset(0 0 0 0 round var(--radius));
                 transform: translateX(var(--dropdown-x)) translateY(0) scale(1);
             }
         }
 
-        @keyframes dropdownZoomOut {
+        @keyframes dropdownCollapse {
             from {
                 opacity: 1;
+                clip-path: inset(0 0 0 0 round var(--radius));
                 transform: translateX(var(--dropdown-x)) translateY(0) scale(1);
             }
             to {
                 opacity: 0;
-                transform: translateX(var(--dropdown-x)) translateY(-4px) scale(0.96);
+                clip-path: inset(0 var(--dropdown-clip-right) calc(100% - 36px) var(--dropdown-clip-left) round 5px);
+                transform: translateX(var(--dropdown-x)) translateY(-7px) scale(0.88);
             }
         }
 
         /* App modal primitive */
         .app-modal {
+            position: fixed;
+            inset: 0;
             width: min(560px, calc(100vw - 32px));
             max-height: min(82vh, 720px);
+            margin: auto;
             overflow: auto;
             padding: 0;
             color: var(--text);
@@ -626,7 +644,8 @@
             border: 1px solid var(--border);
             border-radius: var(--radius);
             box-shadow: 0 28px 90px rgba(0, 0, 0, 0.5);
-            animation: modalZoomIn 160ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            transform-origin: center;
+            animation: modalZoomIn 190ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
         .app-modal::backdrop {
@@ -636,11 +655,11 @@
         }
 
         .app-modal[data-closing] {
-            animation: modalZoomOut 130ms ease-in forwards;
+            animation: modalZoomOut 150ms ease-in forwards;
         }
 
         .app-modal[data-closing]::backdrop {
-            animation: backdropFadeOut 130ms ease-in forwards;
+            animation: backdropFadeOut 150ms ease-in forwards;
         }
 
         .modal-header {
@@ -697,7 +716,7 @@
         @keyframes modalZoomIn {
             from {
                 opacity: 0;
-                transform: translateY(10px) scale(0.96);
+                transform: translateY(18px) scale(0.9);
             }
             to {
                 opacity: 1;
@@ -712,7 +731,7 @@
             }
             to {
                 opacity: 0;
-                transform: translateY(10px) scale(0.96);
+                transform: translateY(18px) scale(0.9);
             }
         }
 
@@ -896,6 +915,14 @@
         .job-link:hover { text-decoration: underline; }
 
         /* ── Flash messages ── */
+        .flash-stack {
+            margin-top: 0;
+        }
+
+        .flash-stack.has-flashes {
+            margin-top: 20px;
+        }
+
         .flash {
             padding: 12px 16px;
             border-radius: 6px;
@@ -904,9 +931,24 @@
             border-left: 3px solid;
         }
 
+        .flash[data-dynamic] {
+            animation: flashSlideIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
         .flash.success { background: rgba(63,185,80,0.08); border-color: var(--green); color: #6ee27a; }
         .flash.error   { background: rgba(248,81,73,0.08); border-color: var(--red); color: #f88; }
         .flash.info    { background: var(--accent-glow); border-color: var(--accent); color: var(--accent-light); }
+
+        @keyframes flashSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-6px) scale(0.98);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
 
         /* ── Section title ── */
         .section-title {
@@ -1048,13 +1090,11 @@
 
     <div class="container">
         {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div style="margin-top: 20px;">
-                    {% for category, message in messages %}
-                        <div class="flash {{ category }}">{{ message }}</div>
-                    {% endfor %}
-                </div>
-            {% endif %}
+        <div class="flash-stack{% if messages %} has-flashes{% endif %}" id="flash-stack" aria-live="polite">
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+        </div>
         {% endwith %}
 
         {% block content %}{% endblock %}
@@ -1167,49 +1207,160 @@
         window.setTimeout(finish, 220);
     }
 
-    document.querySelectorAll('.dropdown-toggle').forEach((trigger) => {
-        trigger.addEventListener('click', (event) => {
-            const dropdown = trigger.closest('details.dropdown');
-            if (!dropdown) return;
-            event.preventDefault();
-            event.stopPropagation();
+    function showFlash(message, category = 'info') {
+        if (!message) return;
+        const stack = document.getElementById('flash-stack');
+        if (!stack) return;
+        const flash = document.createElement('div');
+        flash.className = `flash ${category}`;
+        flash.dataset.dynamic = 'true';
+        flash.textContent = message;
+        stack.classList.add('has-flashes');
+        stack.prepend(flash);
+        window.setTimeout(() => {
+            flash.style.opacity = '0';
+            flash.style.transform = 'translateY(-4px)';
+            window.setTimeout(() => {
+                flash.remove();
+                if (!stack.querySelector('.flash')) stack.classList.remove('has-flashes');
+            }, 180);
+        }, 5200);
+    }
 
-            if (dropdown.open) {
-                closeDropdown(dropdown);
+    function updateStats(stats) {
+        if (!stats) return;
+        const alerts = document.querySelector('[data-stat="alerts"]');
+        const jobs = document.querySelector('[data-stat="jobs"]');
+        const interval = document.querySelector('[data-stat="interval"]');
+        const alertCount = document.querySelector('[data-alert-count]');
+
+        if (alerts && Number.isFinite(stats.alerts)) alerts.textContent = stats.alerts;
+        if (jobs && Number.isFinite(stats.jobs)) jobs.textContent = stats.jobs;
+        if (interval && Number.isFinite(stats.interval)) interval.textContent = `${stats.interval}h`;
+        if (alertCount && Number.isFinite(stats.alerts)) alertCount.textContent = `Current Job Alerts (${stats.alerts})`;
+    }
+
+    function replaceFragment(selector, html, mode = 'outer') {
+        if (!selector || !html) return null;
+        const target = document.querySelector(selector);
+        if (!target) return null;
+
+        const template = document.createElement('template');
+        template.innerHTML = html.trim();
+
+        if (mode === 'inner') {
+            target.innerHTML = template.innerHTML;
+            return target;
+        }
+
+        const replacement = template.content.firstElementChild;
+        if (!replacement) return null;
+        target.replaceWith(replacement);
+        replacement.dataset.fresh = 'true';
+        window.setTimeout(() => replacement.removeAttribute('data-fresh'), 320);
+        return replacement;
+    }
+
+    function setButtonBusy(button, busy) {
+        if (!button) return;
+        if (busy) {
+            button.dataset.idleHtml = button.innerHTML;
+            button.disabled = true;
+            const label = button.dataset.busyLabel || 'Working...';
+            button.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>${label}</span>`;
+        } else {
+            if (button.dataset.idleHtml) button.innerHTML = button.dataset.idleHtml;
+            delete button.dataset.idleHtml;
+            button.disabled = false;
+        }
+    }
+
+    async function submitAsyncForm(form, submitter) {
+        const fragment = form.closest('[data-watch-fragment]');
+        const action = submitter && submitter.formAction ? submitter.formAction : form.action;
+        const method = (form.method || 'POST').toUpperCase();
+        const data = new FormData(form);
+
+        if (submitter && submitter.name) {
+            data.append(submitter.name, submitter.value);
+        }
+
+        closeAllDropdowns();
+        setButtonBusy(submitter, true);
+        form.setAttribute('aria-busy', 'true');
+        if (fragment) fragment.setAttribute('data-pending', '');
+
+        try {
+            const response = await fetch(action, {
+                method,
+                body: data,
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'fetch',
+                },
+                credentials: 'same-origin',
+            });
+
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                window.location.assign(response.url || window.location.href);
                 return;
             }
 
-            closeAllDropdowns(dropdown);
-            dropdown.removeAttribute('data-closing');
-            dropdown.open = true;
-        });
-    });
-
-    document.querySelectorAll('[data-modal-target]').forEach((trigger) => {
-        trigger.addEventListener('click', (event) => {
-            event.preventDefault();
-            const dialog = document.getElementById(trigger.dataset.modalTarget);
-            openModal(dialog);
-        });
-    });
-
-    document.querySelectorAll('[data-modal-close]').forEach((trigger) => {
-        trigger.addEventListener('click', () => {
-            closeModal(trigger.closest('dialog'));
-        });
-    });
-
-    document.querySelectorAll('.app-modal').forEach((dialog) => {
-        dialog.addEventListener('click', (event) => {
-            if (event.target === dialog) closeModal(dialog);
-        });
-        dialog.addEventListener('cancel', (event) => {
-            event.preventDefault();
-            closeModal(dialog);
-        });
-    });
+            const payload = await response.json();
+            if (payload.html && payload.replace_target) {
+                replaceFragment(payload.replace_target, payload.html, payload.replace_mode);
+            }
+            updateStats(payload.stats);
+            showFlash(payload.message, payload.category || (response.ok ? 'success' : 'error'));
+        } catch (error) {
+            showFlash('That action could not be completed. Please try again.', 'error');
+        } finally {
+            setButtonBusy(submitter, false);
+            form.removeAttribute('aria-busy');
+            if (fragment && fragment.isConnected) fragment.removeAttribute('data-pending');
+        }
+    }
 
     document.addEventListener('click', (event) => {
+        const toggle = event.target.closest('.dropdown-toggle');
+        if (toggle) {
+            const dropdown = toggle.closest('details.dropdown');
+            if (dropdown) {
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (dropdown.open) {
+                    closeDropdown(dropdown);
+                } else {
+                    closeAllDropdowns(dropdown);
+                    dropdown.removeAttribute('data-closing');
+                    dropdown.open = true;
+                }
+                return;
+            }
+        }
+
+        const modalTrigger = event.target.closest('[data-modal-target]');
+        if (modalTrigger) {
+            event.preventDefault();
+            const dialog = document.getElementById(modalTrigger.dataset.modalTarget);
+            openModal(dialog);
+            return;
+        }
+
+        const modalClose = event.target.closest('[data-modal-close]');
+        if (modalClose) {
+            event.preventDefault();
+            closeModal(modalClose.closest('dialog'));
+            return;
+        }
+
+        if (event.target.matches('.app-modal')) {
+            closeModal(event.target);
+            return;
+        }
+
         const btn = document.getElementById('hamburgerBtn');
         const menu = document.getElementById('mobileMenu');
         if (btn && menu && !btn.contains(event.target) && !menu.contains(event.target)) {
@@ -1223,6 +1374,19 @@
 
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') closeAllDropdowns();
+    });
+
+    document.addEventListener('cancel', (event) => {
+        if (!event.target.matches('.app-modal')) return;
+        event.preventDefault();
+        closeModal(event.target);
+    }, true);
+
+    document.addEventListener('submit', (event) => {
+        const form = event.target.closest('form[data-async-form]');
+        if (!form) return;
+        event.preventDefault();
+        submitAsyncForm(form, event.submitter);
     });
     </script>
 </body>

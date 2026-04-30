@@ -1,0 +1,12 @@
+<div class="watch-list" id="watch-list">
+    {% if watch_data %}
+        {% for wd in watch_data %}
+            {% include "_watch_card.html" %}
+        {% endfor %}
+    {% else %}
+        <div class="empty">
+            <div class="empty-title">No saved alerts</div>
+            <p>Add your first company above to get started.</p>
+        </div>
+    {% endif %}
+</div>
