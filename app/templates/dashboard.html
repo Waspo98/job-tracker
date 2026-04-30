@@ -49,7 +49,7 @@
             </div>
         </div>
         <div style="margin-top: 20px;">
-            <button type="submit" class="btn btn-primary">＋ Add Alert</button>
+            <button type="submit" class="btn btn-primary">+ Add Alert & Check</button>
         </div>
     </form>
 </div>
@@ -66,7 +66,7 @@
 {% if watch_data %}
     {% for wd in watch_data %}
     {% set w = wd.watch %}
-    <div class="watch-card">
+    <div class="watch-card" id="watch-{{ w.id }}">
         <div class="watch-icon">
             {% if w.careers_url %}
             <img src="https://www.google.com/s2/favicons?domain={{ w.careers_url | domain }}&sz=32"
@@ -95,6 +95,30 @@
                     <span class="chip warn">last scan failed</span>
                 {% endif %}
             </div>
+
+            <details class="edit-watch">
+                <summary>Edit alert</summary>
+                <form action="/edit/{{ w.id }}" method="POST" class="edit-watch-form">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="form-grid">
+                        <div class="field">
+                            <label>Company Name</label>
+                            <input type="text" name="company_name" value="{{ w.company_name }}" required>
+                        </div>
+                        <div class="field">
+                            <label>Careers Page URL</label>
+                            <input type="url" name="custom_url" value="{{ w.careers_url }}" required>
+                        </div>
+                        <div class="field form-full">
+                            <label>Keywords <span style="font-weight:400; color:var(--text-faint);">(optional)</span></label>
+                            <input type="text" name="keywords" value="{{ w.keywords }}" placeholder="engineer, mechanical, product designer">
+                        </div>
+                    </div>
+                    <div class="edit-watch-actions">
+                        <button type="submit" class="btn btn-primary btn-sm">Save & Check</button>
+                    </div>
+                </form>
+            </details>
 
             {% if w.last_error %}
             <div class="watch-error">Last scan issue: {{ w.last_error }}</div>
@@ -168,9 +192,46 @@
     font-size: 12px;
 }
 
+.edit-watch {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.edit-watch summary {
+    cursor: pointer;
+    color: var(--accent-light);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.edit-watch-form {
+    margin-top: 12px;
+}
+
+.edit-watch-actions {
+    display: flex;
+    justify-content: flex-start;
+    margin-top: 12px;
+}
+
 .btn-sm {
     font-size: 12px !important;
     padding: 5px 12px !important;
+}
+
+@media (max-width: 640px) {
+    .section-title-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .watch-card {
+        flex-wrap: wrap;
+    }
 }
 </style>
 

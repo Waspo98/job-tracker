@@ -82,11 +82,31 @@ def _is_valid_email(email):
     return email and len(email) <= MAX_EMAIL_LENGTH and '@' in email and '.' in email.rsplit('@', 1)[-1]
 
 
-def _too_long(value, label, max_length):
-    if len(value) <= max_length:
-        return False
-    flash(f'{label} must be {max_length} characters or fewer.', 'error')
-    return True
+def _validate_alert_input(company, url, keywords):
+    company = (company or '').strip()
+    url = (url or '').strip()
+    keywords = (keywords or '').strip()
+
+    if not company:
+        return None, None, None, 'Company name is required.'
+
+    length_checks = (
+        (company, 'Company name', MAX_COMPANY_LENGTH),
+        (url, 'Careers page URL', MAX_URL_LENGTH),
+        (keywords, 'Keywords', MAX_KEYWORDS_LENGTH),
+    )
+    for value, label, max_length in length_checks:
+        if len(value) > max_length:
+            return None, None, None, f'{label} must be {max_length} characters or fewer.'
+
+    if not url or not url.startswith(('http://', 'https://')):
+        return None, None, None, 'Please provide a valid URL starting with http:// or https://'
+
+    url, url_error = validate_public_http_url(url)
+    if url_error:
+        return None, None, None, url_error
+
+    return company, url, keywords, None
 
 
 def validate_startup_config():
@@ -286,25 +306,13 @@ def dashboard():
 @app.route('/add-custom', methods=['POST'])
 @login_required
 def add_custom():
-    company = request.form.get('company_name', '').strip()
-    url = request.form.get('custom_url', '').strip()
-    keywords = request.form.get('keywords', '').strip()
-
-    if not company:
-        flash('Company name is required.', 'error')
-        return redirect(url_for('dashboard') + '#add-alert')
-    if (
-        _too_long(company, 'Company name', MAX_COMPANY_LENGTH) or
-        _too_long(url, 'Careers page URL', MAX_URL_LENGTH) or
-        _too_long(keywords, 'Keywords', MAX_KEYWORDS_LENGTH)
-    ):
-        return redirect(url_for('dashboard') + '#add-alert')
-    if not url or not url.startswith('http'):
-        flash('Please provide a valid URL starting with http:// or https://', 'error')
-        return redirect(url_for('dashboard') + '#add-alert')
-    url, url_error = validate_public_http_url(url)
-    if url_error:
-        flash(url_error, 'error')
+    company, url, keywords, error = _validate_alert_input(
+        request.form.get('company_name'),
+        request.form.get('custom_url'),
+        request.form.get('keywords'),
+    )
+    if error:
+        flash(error, 'error')
         return redirect(url_for('dashboard') + '#add-alert')
     if db.get_active_watch_by_url(current_user.id, url):
         flash('You already have an active alert for that careers page.', 'info')
@@ -313,8 +321,7 @@ def add_custom():
     watch_id = db.add_watch(current_user.id, company, url, 'custom', None, keywords)
 
     # Immediately run an initial scrape so results appear right away
-    watches = db.get_watches_for_user(current_user.id)
-    watch = next((w for w in watches if w['id'] == watch_id), None)
+    watch = db.get_watch_for_user(watch_id, current_user.id)
 
     if watch:
         new_jobs, expired, error = _run_check(watch)
@@ -345,6 +352,66 @@ def add_custom():
         flash(f'Added {company}.', 'success')
 
     return redirect(url_for('dashboard') + '#alerts-section')
+
+
+@app.route('/edit/<int:watch_id>', methods=['POST'])
+@login_required
+def edit_watch(watch_id):
+    existing_watch = db.get_watch_for_user(watch_id, current_user.id)
+    if not existing_watch:
+        flash('Alert not found.', 'error')
+        return redirect(url_for('dashboard') + '#alerts-section')
+
+    company, url, keywords, error = _validate_alert_input(
+        request.form.get('company_name'),
+        request.form.get('custom_url'),
+        request.form.get('keywords'),
+    )
+    if error:
+        flash(error, 'error')
+        return redirect(url_for('dashboard') + f'#watch-{watch_id}')
+
+    duplicate = db.get_active_watch_by_url(current_user.id, url, exclude_watch_id=watch_id)
+    if duplicate:
+        flash('You already have another active alert for that careers page.', 'info')
+        return redirect(url_for('dashboard') + f'#watch-{watch_id}')
+
+    if not db.update_watch(watch_id, current_user.id, company, url, keywords):
+        flash('Alert not found.', 'error')
+        return redirect(url_for('dashboard') + '#alerts-section')
+
+    watch = db.get_watch_for_user(watch_id, current_user.id)
+    new_jobs, expired, error = _run_check(watch)
+
+    if error:
+        flash(f'Updated {company}, but the check failed: {error}', 'info')
+    elif new_jobs:
+        sent = send_job_alert(current_user.email, company, new_jobs)
+        if sent:
+            db.mark_jobs_notified(watch_id, [job['job_id'] for job in new_jobs])
+            flash(
+                f'Updated {company} and found {len(new_jobs)} new matching listing'
+                f'{"s" if len(new_jobs) > 1 else ""}. Check your email.',
+                'success',
+            )
+        else:
+            flash(
+                f'Updated {company} and found {len(new_jobs)} new matching listing'
+                f'{"s" if len(new_jobs) > 1 else ""}, but the email alert could not be sent. '
+                f'The app will retry on the next check.',
+                'error',
+            )
+    else:
+        active_count = len(db.get_jobs_for_watch(watch_id))
+        message = (
+            f'Updated {company}; check complete with {active_count} current matching listing'
+            f'{"s" if active_count != 1 else ""}.'
+        )
+        if expired:
+            message += f' {expired} stale listing{"s" if expired != 1 else ""} removed.'
+        flash(message, 'success')
+
+    return redirect(url_for('dashboard') + f'#watch-{watch_id}')
 
 
 @app.route('/delete/<int:watch_id>', methods=['POST'])

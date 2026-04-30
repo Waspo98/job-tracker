@@ -1,5 +1,7 @@
 import hashlib
 import re
+from urllib.parse import parse_qs, urljoin, urlparse
+
 import requests
 from bs4 import BeautifulSoup
 from http_client import get as http_get
@@ -25,6 +27,11 @@ JOB_SIGNALS = re.compile(
 NOISE_PATTERNS = re.compile(
     r'^(home|about|contact|privacy|terms|blog|news|press|login|sign|careers$|jobs$|'
     r'search|filter|sort|apply|back|next|prev|load more|show more)$',
+    re.I
+)
+
+BOARD_URL_RE = re.compile(
+    r'(?:https?:)?//[^\s"\'<>)]*(?:greenhouse\.io|lever\.co)[^\s"\'<>)]*',
     re.I
 )
 
@@ -89,6 +96,82 @@ def _looks_like_job(text):
     return False
 
 
+def _normalise_urlish_value(value):
+    value = (value or '').strip()
+    if not value:
+        return ''
+    value = value.replace('\\/', '/').strip(' "\'<>),;')
+    if value.startswith('//'):
+        return f'https:{value}'
+    if value.startswith('http://') or value.startswith('https://'):
+        return value
+    if 'greenhouse.io' in value or 'lever.co' in value:
+        return f'https://{value.lstrip("/")}'
+    return value
+
+
+def _clean_slug(value):
+    value = (value or '').strip().strip('/')
+    if re.fullmatch(r'[A-Za-z0-9_-]+', value):
+        return value
+    return ''
+
+
+def _greenhouse_slug_from_url(value):
+    parsed = urlparse(_normalise_urlish_value(value))
+    host = parsed.netloc.lower()
+    parts = [part for part in parsed.path.split('/') if part]
+
+    if host == 'boards-api.greenhouse.io' and len(parts) >= 3 and parts[:2] == ['v1', 'boards']:
+        return _clean_slug(parts[2])
+
+    if host not in ('boards.greenhouse.io', 'job-boards.greenhouse.io'):
+        return ''
+
+    if parts[:2] == ['embed', 'job_board']:
+        return _clean_slug(parse_qs(parsed.query).get('for', [''])[0])
+
+    if parts and parts[0] != 'embed':
+        return _clean_slug(parts[0])
+
+    return _clean_slug(parse_qs(parsed.query).get('for', [''])[0])
+
+
+def _lever_slug_from_url(value):
+    parsed = urlparse(_normalise_urlish_value(value))
+    host = parsed.netloc.lower()
+    parts = [part for part in parsed.path.split('/') if part]
+
+    if host == 'api.lever.co' and len(parts) >= 3 and parts[:2] == ['v0', 'postings']:
+        return _clean_slug(parts[2])
+    if host == 'jobs.lever.co' and parts:
+        return _clean_slug(parts[0])
+    return ''
+
+
+def _candidate_board_values(html, soup):
+    values = []
+    for tag in soup.find_all(True):
+        for attr in ('href', 'src', 'data-src', 'data-url', 'data-board-url'):
+            value = tag.get(attr)
+            if value:
+                values.append(value)
+    values.extend(match.group(0) for match in BOARD_URL_RE.finditer(html))
+    return values
+
+
+def _detect_supported_board(html, soup):
+    for value in _candidate_board_values(html, soup):
+        slug = _greenhouse_slug_from_url(value)
+        if slug:
+            return 'greenhouse', slug
+
+        slug = _lever_slug_from_url(value)
+        if slug:
+            return 'lever', slug
+
+    return None, None
+
 
 def check_custom_url(url, keywords):
     """
@@ -109,6 +192,11 @@ def check_custom_url(url, keywords):
         return [], f"Could not fetch {url}: {e}"
 
     soup = BeautifulSoup(resp.text, 'html.parser')
+    ats_type, slug = _detect_supported_board(resp.text, soup)
+    if ats_type == 'greenhouse':
+        return check_greenhouse(slug, keywords)
+    if ats_type == 'lever':
+        return check_lever(slug, keywords)
 
     # Remove script/style/nav/footer noise
     for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
@@ -121,7 +209,6 @@ def check_custom_url(url, keywords):
         text = a.get_text(strip=True)
         href = a['href']
         if not href.startswith('http'):
-            from urllib.parse import urljoin
             href = urljoin(url, href)
         if _looks_like_job(text):
             candidates.append({'text': text, 'href': href, 'el': a})
@@ -135,7 +222,6 @@ def check_custom_url(url, keywords):
             if a:
                 href = a['href']
                 if not href.startswith('http'):
-                    from urllib.parse import urljoin
                     href = urljoin(url, href)
             if _looks_like_job(text):
                 candidates.append({'text': text, 'href': href, 'el': li})

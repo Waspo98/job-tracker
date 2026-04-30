@@ -161,6 +161,14 @@ def get_watches_for_user(user_id):
         ).fetchall()
 
 
+def get_watch_for_user(watch_id, user_id):
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT * FROM watches WHERE id = ? AND user_id = ? AND active = 1",
+            (watch_id, user_id)
+        ).fetchone()
+
+
 def get_all_active_watches():
     with get_db() as conn:
         return conn.execute(
@@ -180,12 +188,29 @@ def add_watch(user_id, company_name, careers_url, ats_type, ats_slug, keywords):
         return cur.lastrowid
 
 
-def get_active_watch_by_url(user_id, careers_url):
+def get_active_watch_by_url(user_id, careers_url, exclude_watch_id=None):
+    query = (
+        "SELECT * FROM watches "
+        "WHERE user_id = ? AND lower(careers_url) = lower(?) AND active = 1"
+    )
+    params = [user_id, careers_url]
+    if exclude_watch_id is not None:
+        query += " AND id != ?"
+        params.append(exclude_watch_id)
+
     with get_db() as conn:
-        return conn.execute(
-            "SELECT * FROM watches WHERE user_id = ? AND lower(careers_url) = lower(?) AND active = 1",
-            (user_id, careers_url)
-        ).fetchone()
+        return conn.execute(query, params).fetchone()
+
+
+def update_watch(watch_id, user_id, company_name, careers_url, keywords):
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE watches SET company_name = ?, careers_url = ?, ats_type = 'custom', "
+            "ats_slug = NULL, keywords = ?, last_error = NULL "
+            "WHERE id = ? AND user_id = ? AND active = 1",
+            (company_name.strip(), careers_url, keywords.strip(), watch_id, user_id)
+        )
+        return cur.rowcount > 0
 
 
 def delete_watch(watch_id, user_id):

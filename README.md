@@ -7,10 +7,12 @@ It stores users, watches, and discovered jobs in SQLite. The active flow is inte
 ## Features
 
 - Per-user job watches
+- Edit saved watches and re-check immediately
 - Keyword filtering by job title
 - SQLite persistence
 - Email alerts through Gmail SMTP/app passwords
 - Manual per-user checks and scheduled checks
+- Greenhouse and Lever board detection on custom careers pages
 - CSRF protection for state-changing forms
 - Public URL validation for custom scraper targets
 - Docker image suitable for GitHub Container Registry
@@ -123,4 +125,5 @@ docker compose up -d --build
 ## Notes
 
 - Only public HTTP/HTTPS careers page URLs are accepted for custom watches.
+- Custom watches first look for supported Greenhouse/Lever board links, then fall back to static HTML scraping.
 - Keep `.env` and `data/` out of Git. The included ignore files already do this.
