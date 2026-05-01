@@ -10,6 +10,15 @@ export interface Session {
   csrf_token: string;
   user: User | null;
   check_interval: number;
+  authentik_enabled: boolean;
+  authentik_login_url: string | null;
+  authentik_login_button_text: string;
+  password_login_enabled: boolean;
+}
+
+export interface LogoutResponse {
+  ok: boolean;
+  logout_url?: string | null;
 }
 
 export interface Job {

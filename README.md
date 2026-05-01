@@ -31,6 +31,7 @@ CHECK_INTERVAL_HOURS=4
 SMTP_USER=yourgmail@gmail.com
 SMTP_PASS=your-gmail-app-password
 APP_BASE_URL=https://jobs.example.com
+AUTHENTIK_ENABLED=0
 LOG_LEVEL=INFO
 ```
 
@@ -86,6 +87,31 @@ For Gmail alerts, create an app password:
 
 If SMTP is missing or fails, discovered jobs remain pending for notification and the app retries on future checks.
 
+## Authentik / OIDC Setup
+
+Email/password auth remains enabled by default. To add Authentik SSO, create an Authentik OAuth2/OpenID provider and application, then set:
+
+```env
+APP_BASE_URL=https://jobs.example.com
+AUTHENTIK_ENABLED=1
+AUTHENTIK_ISSUER_URL=https://auth.example.com/application/o/job-tracker/
+AUTHENTIK_CLIENT_ID=your-client-id
+AUTHENTIK_CLIENT_SECRET=your-client-secret
+AUTHENTIK_LOGIN_BUTTON_TEXT=Log in with your SSO account
+AUTHENTIK_SCOPES=openid email profile
+AUTHENTIK_AUTO_REGISTER=1
+AUTHENTIK_REQUIRE_VERIFIED_EMAIL=1
+AUTHENTIK_DISABLE_PASSWORD_LOGIN=0
+```
+
+Configure the Authentik redirect URI as:
+
+```text
+https://jobs.example.com/auth/authentik/callback
+```
+
+`AUTHENTIK_DISABLE_PASSWORD_LOGIN=1` hides and disables local email/password login, but the default keeps local login and registration available. `OIDC_*` aliases are also accepted for issuer, client ID, client secret, scopes, login button text, and enablement.
+
 ## Push Notification Framework
 
 Browser push delivery remains staged. The UI and database keep per-alert push preferences, and the service worker can display push payloads. The remaining pieces are:
@@ -96,6 +122,6 @@ Browser push delivery remains staged. The UI and database keep per-alert push pr
 
 ## Notes
 
-- Authentik/OIDC from the old Flask app is not wired into this rebuild yet.
+- Authentik/OIDC uses the same callback path as the old Flask app.
 - Existing SQLite data is intended to continue working with the current schema.
 - The legacy Jinja templates remain in the tree for comparison during the migration, but the new runtime serves the React app.

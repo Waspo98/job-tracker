@@ -1162,6 +1162,39 @@ footer {
   font-size: 13px;
 }
 
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 18px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.auth-divider span {
+  height: 1px;
+  flex: 1;
+  background: var(--border);
+}
+
+.auth-divider b {
+  font-weight: 500;
+}
+
+.auth-sso {
+  margin-top: 0;
+}
+
+.auth-empty {
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
 footer {
   position: relative;
   z-index: 1;

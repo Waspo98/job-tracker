@@ -1,4 +1,4 @@
-import type { ActionResponse, Dashboard, Job, PreviewResponse, Session, WatchInput } from "./types";
+import type { ActionResponse, Dashboard, Job, LogoutResponse, PreviewResponse, Session, WatchInput } from "./types";
 
 let csrfToken = "";
 
@@ -57,7 +57,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password })
     }),
-  logout: () => apiFetch<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  logout: () => apiFetch<LogoutResponse>("/api/auth/logout", { method: "POST" }),
   dashboard: () => apiFetch<Dashboard>("/api/dashboard"),
   jobs: () => apiFetch<Job[]>("/api/jobs"),
   preview: (input: WatchInput) =>

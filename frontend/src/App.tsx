@@ -13,6 +13,7 @@ import {
   MoreVertical,
   Plus,
   RefreshCcw,
+  ShieldCheck,
   Trash2,
   X
 } from "lucide-react";
@@ -267,15 +268,22 @@ export default function App() {
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      await api.logout();
-      return api.session();
+      const logout = await api.logout();
+      if (logout.logout_url) return { logout, session: null };
+      return { logout, session: await api.session() };
     },
-    onSuccess: (fresh) => {
+    onSuccess: ({ logout, session: fresh }) => {
       queryClient.removeQueries({ queryKey: ["dashboard"] });
       queryClient.removeQueries({ queryKey: ["jobs"] });
-      setCsrfToken(fresh.csrf_token);
-      queryClient.setQueryData(["session"], fresh);
       setConfirmLogoutOpen(false);
+      if (logout.logout_url) {
+        window.location.assign(logout.logout_url);
+        return;
+      }
+      if (fresh) {
+        setCsrfToken(fresh.csrf_token);
+        queryClient.setQueryData(["session"], fresh);
+      }
       navigate("/");
     },
     onError: (error) => notify(messageFromError(error), "error")
@@ -312,7 +320,7 @@ export default function App() {
   if (!sessionQuery.data?.authenticated) {
     return (
       <>
-        <AuthView notify={notify} />
+        <AuthView notify={notify} session={sessionQuery.data || null} />
         <ToastStack toasts={toasts} onDismiss={closeToast} />
       </>
     );
@@ -449,11 +457,20 @@ function TopNav({
   );
 }
 
-function AuthView({ notify }: { notify: (message: string, category?: Category) => void }) {
+function AuthView({ notify, session }: { notify: (message: string, category?: Category) => void; session: Session | null }) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [ssoPending, setSsoPending] = useState(false);
+  const passwordLoginEnabled = session?.password_login_enabled ?? true;
+  const authentikEnabled = Boolean(session?.authentik_enabled && session.authentik_login_url);
+  const authentikButtonText = session?.authentik_login_button_text || "Log in with Authentik";
+  const authentikLoginUrl = session?.authentik_login_url
+    ? `${session.authentik_login_url}${session.authentik_login_url.includes("?") ? "&" : "?"}${new URLSearchParams({
+        next: `${window.location.pathname}${window.location.search}`
+      }).toString()}`
+    : "";
 
   const mutation = useMutation({
     mutationFn: () => (mode === "login" ? api.login(email, password) : api.register(email, password)),
@@ -464,8 +481,28 @@ function AuthView({ notify }: { notify: (message: string, category?: Category) =
     onError: (error) => notify(messageFromError(error), "error")
   });
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get("auth_error");
+    if (!authError) return;
+
+    notify(authError, "error");
+    params.delete("auth_error");
+    const nextSearch = params.toString();
+    window.history.replaceState(
+      {},
+      "",
+      `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`
+    );
+  }, [notify]);
+
+  useEffect(() => {
+    if (!passwordLoginEnabled && mode !== "login") setMode("login");
+  }, [mode, passwordLoginEnabled]);
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (!passwordLoginEnabled) return;
     mutation.mutate();
   };
 
@@ -482,23 +519,52 @@ function AuthView({ notify }: { notify: (message: string, category?: Category) =
           </span>
         </div>
 
-        <form onSubmit={submit}>
-          <div className="field stacked">
-            <label>Email</label>
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-          </div>
-          <div className="field stacked">
-            <label>Password</label>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={mode === "register" ? 8 : undefined} />
-          </div>
-          <Button fullWidth type="submit" loading={mutation.isPending}>
-            {mode === "login" ? "Log In" : "Create Account"}
-          </Button>
-        </form>
+        {passwordLoginEnabled && (
+          <>
+            <form onSubmit={submit}>
+              <div className="field stacked">
+                <label>Email</label>
+                <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+              </div>
+              <div className="field stacked">
+                <label>Password</label>
+                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={mode === "register" ? 8 : undefined} />
+              </div>
+              <Button fullWidth type="submit" loading={mutation.isPending}>
+                {mode === "login" ? "Log In" : "Create Account"}
+              </Button>
+            </form>
 
-        <button className="auth-switch" type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
-          {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
-        </button>
+            <button className="auth-switch" type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+              {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
+            </button>
+          </>
+        )}
+
+        {passwordLoginEnabled && authentikEnabled && (
+          <div className="auth-divider">
+            <span />
+            <b>or</b>
+            <span />
+          </div>
+        )}
+
+        {authentikEnabled && (
+          <ButtonLink
+            className="auth-sso"
+            fullWidth
+            href={authentikLoginUrl}
+            icon={ssoPending ? <Spinner /> : <ShieldCheck size={16} />}
+            onClick={() => setSsoPending(true)}
+            aria-disabled={ssoPending}
+          >
+            {ssoPending ? "Redirecting..." : authentikButtonText}
+          </ButtonLink>
+        )}
+
+        {!passwordLoginEnabled && !authentikEnabled && (
+          <div className="auth-empty">Sign-in is not configured.</div>
+        )}
       </section>
     </main>
   );

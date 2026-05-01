@@ -28,6 +28,22 @@ class ApiTests(unittest.TestCase):
         self.client = TestClient(main.app)
         self.original_check = main.check_watch
         self.addCleanup(lambda: setattr(main, "check_watch", self.original_check))
+        self.original_get_authentik_client = main._get_authentik_client
+        self.addCleanup(lambda: setattr(main, "_get_authentik_client", self.original_get_authentik_client))
+        self.original_auth_config = {
+            "AUTHENTIK_ENABLED": main.AUTHENTIK_ENABLED,
+            "AUTHENTIK_AUTO_REGISTER": main.AUTHENTIK_AUTO_REGISTER,
+            "AUTHENTIK_REQUIRE_VERIFIED_EMAIL": main.AUTHENTIK_REQUIRE_VERIFIED_EMAIL,
+            "AUTHENTIK_DISABLE_PASSWORD_LOGIN": main.AUTHENTIK_DISABLE_PASSWORD_LOGIN,
+            "AUTHENTIK_DISPLAY_NAME": main.AUTHENTIK_DISPLAY_NAME,
+            "AUTHENTIK_LOGIN_BUTTON_TEXT": main.AUTHENTIK_LOGIN_BUTTON_TEXT,
+            "_authentik_client": main._authentik_client,
+        }
+        self.addCleanup(self._restore_auth_config)
+
+    def _restore_auth_config(self):
+        for name, value in self.original_auth_config.items():
+            setattr(main, name, value)
 
     def _csrf(self):
         response = self.client.get("/api/session")
@@ -53,6 +69,103 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(payload["authenticated"])
         self.assertEqual(payload["user"]["email"], "person@example.com")
         self.assertTrue(csrf)
+
+    def test_session_exposes_authentik_login_config(self):
+        main.AUTHENTIK_ENABLED = True
+        main.AUTHENTIK_LOGIN_BUTTON_TEXT = "Log in with your SSO account"
+        main.AUTHENTIK_DISABLE_PASSWORD_LOGIN = False
+
+        response = self.client.get("/api/session")
+        payload = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(payload["authenticated"])
+        self.assertTrue(payload["authentik_enabled"])
+        self.assertEqual(payload["authentik_login_url"], "/auth/authentik/login")
+        self.assertEqual(payload["authentik_login_button_text"], "Log in with your SSO account")
+        self.assertTrue(payload["password_login_enabled"])
+
+    def test_password_auth_still_works_when_authentik_is_enabled(self):
+        main.AUTHENTIK_ENABLED = True
+
+        self._register(email="local@example.com", password="password123")
+        session_payload = self.client.get("/api/session").json()
+
+        self.assertTrue(session_payload["authenticated"])
+        self.assertEqual(session_payload["user"]["email"], "local@example.com")
+
+    def test_authentik_callback_creates_authenticated_session(self):
+        class FakeAuthentikClient:
+            server_metadata = {}
+
+            async def authorize_access_token(self, _request):
+                return {
+                    "id_token": "id-token",
+                    "userinfo": {
+                        "email": "sso@example.com",
+                        "email_verified": True,
+                    },
+                }
+
+        main.AUTHENTIK_ENABLED = True
+        main.AUTHENTIK_AUTO_REGISTER = True
+        main.AUTHENTIK_REQUIRE_VERIFIED_EMAIL = True
+        main._get_authentik_client = lambda: FakeAuthentikClient()
+
+        response = self.client.get("/auth/authentik/callback", follow_redirects=False)
+        session_response = self.client.get("/api/session")
+        payload = session_response.json()
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/")
+        self.assertEqual(session_response.status_code, 200)
+        self.assertTrue(payload["authenticated"])
+        self.assertEqual(payload["user"]["email"], "sso@example.com")
+
+    def test_authentik_logout_returns_provider_logout_url_and_clears_session(self):
+        class FakeAuthentikClient:
+            server_metadata = {
+                "end_session_endpoint": "https://auth.example.com/application/o/job-tracker/end-session/"
+            }
+
+            async def authorize_access_token(self, _request):
+                return {
+                    "id_token": "id-token",
+                    "userinfo": {
+                        "email": "sso@example.com",
+                        "email_verified": True,
+                    },
+                }
+
+        main.AUTHENTIK_ENABLED = True
+        main._get_authentik_client = lambda: FakeAuthentikClient()
+
+        callback_response = self.client.get("/auth/authentik/callback", follow_redirects=False)
+        self.assertEqual(callback_response.status_code, 303)
+        token = self._csrf()
+
+        logout_response = self.client.post("/api/auth/logout", headers={"X-CSRF-Token": token})
+        payload = logout_response.json()
+        fresh_session = self.client.get("/api/session").json()
+
+        self.assertEqual(logout_response.status_code, 200, logout_response.text)
+        self.assertTrue(payload["ok"])
+        self.assertIn("https://auth.example.com/application/o/job-tracker/end-session/", payload["logout_url"])
+        self.assertIn("id_token_hint=id-token", payload["logout_url"])
+        self.assertIn("post_logout_redirect_uri=http%3A%2F%2Ftestserver%2F", payload["logout_url"])
+        self.assertFalse(fresh_session["authenticated"])
+
+    def test_local_logout_clears_session_without_provider_logout_url(self):
+        token = self._register()
+
+        response = self.client.post("/api/auth/logout", headers={"X-CSRF-Token": token})
+        payload = response.json()
+        fresh_session = self.client.get("/api/session").json()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(payload["ok"])
+        self.assertIsNone(payload["logout_url"])
+        self.assertFalse(fresh_session["authenticated"])
 
     def test_create_watch_saves_jobs_and_returns_dashboard_state(self):
         token = self._register()
