@@ -125,6 +125,7 @@ nav {
 .nav-logo-text,
 .nav-logo-sub,
 .nav-link,
+.nav-mobile-link,
 .nav-user,
 .page-label,
 .section-title,
@@ -260,6 +261,9 @@ footer {
   border: 0;
   background: transparent;
   color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.04em;
   text-align: left;
 }
 
@@ -267,6 +271,14 @@ footer {
   border-bottom: 1px solid var(--border);
   color: var(--text-faint);
   font-size: 11px;
+  cursor: default;
+  letter-spacing: 0;
+}
+
+.nav-mobile-link:hover,
+.nav-mobile-link.active {
+  color: var(--accent-light);
+  background: var(--accent-glow);
 }
 
 .page-header {
@@ -484,6 +496,11 @@ footer {
   color: #fff;
 }
 
+.btn-danger-solid:hover:not(:disabled) {
+  background: #ff6b63;
+  box-shadow: 0 0 20px rgba(248, 81, 73, 0.2);
+}
+
 .full-width {
   width: 100%;
 }
@@ -638,7 +655,7 @@ footer {
 
 .job-location-inline {
   color: var(--text-faint);
-  font-size: 0.9em;
+  font-size: 12px;
 }
 
 .job-link {
@@ -743,6 +760,12 @@ footer {
   padding: 16px;
   background: rgba(4, 8, 13, 0.62);
   backdrop-filter: blur(7px);
+  animation: modalBackdropIn 150ms ease-out;
+}
+
+.modal-backdrop.closing {
+  pointer-events: none;
+  animation: modalBackdropOut 180ms ease-in forwards;
 }
 
 .app-modal {
@@ -750,10 +773,14 @@ footer {
   max-height: min(82vh, 720px);
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
   animation: modalZoomIn 150ms ease-out;
+}
+
+.app-modal.closing {
+  animation: modalZoomOut 180ms ease-in forwards;
 }
 
 .modal-header {
@@ -788,6 +815,13 @@ footer {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.modal-close:hover {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+  color: var(--accent-light);
 }
 
 .modal-body {
@@ -922,6 +956,10 @@ footer {
 }
 
 .flash {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 8px;
   padding: 12px 16px;
   border: 1px solid var(--border);
@@ -929,6 +967,31 @@ footer {
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+  animation: toastIn 160ms ease-out;
+}
+
+.flash.leaving {
+  animation: toastOut 180ms ease-in forwards;
+}
+
+.flash-close {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin: -2px -6px -2px 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.flash-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
 }
 
 .flash.success {
@@ -968,7 +1031,7 @@ footer {
   width: min(420px, 100%);
   padding: 40px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--surface);
 }
 
@@ -1026,6 +1089,24 @@ footer {
   }
 }
 
+@keyframes modalBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalBackdropOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 @keyframes modalZoomIn {
   from {
     opacity: 0;
@@ -1034,6 +1115,39 @@ footer {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes modalZoomOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toastOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
   }
 }
 

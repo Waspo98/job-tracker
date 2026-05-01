@@ -1,18 +1,19 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
   BriefcaseBusiness,
   Check,
+  ChevronDown,
+  ChevronUp,
   ChevronsUpDown,
   Edit3,
   ExternalLink,
   Eye,
-  LogOut,
   MoreVertical,
   Plus,
   RefreshCcw,
-  Search,
   Trash2,
   X
 } from "lucide-react";
@@ -23,7 +24,10 @@ type Toast = {
   id: number;
   category: Category;
   message: string;
+  leaving?: boolean;
 };
+
+const UI_EXIT_MS = 180;
 
 const emptyWatchInput: WatchInput = {
   company_name: "",
@@ -102,6 +106,91 @@ function useRoute() {
   return { path, navigate };
 }
 
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function usePresence(active: boolean) {
+  const [present, setPresent] = useState(active);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    if (active) {
+      setPresent(true);
+      setClosing(false);
+      return;
+    }
+
+    if (!present) return;
+
+    setClosing(true);
+    const timer = window.setTimeout(() => {
+      setPresent(false);
+      setClosing(false);
+    }, UI_EXIT_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [active, present]);
+
+  return {
+    present: active || present,
+    closing: !active && closing
+  };
+}
+
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "primary" | "ghost" | "danger";
+  size?: "default" | "sm";
+  fullWidth?: boolean;
+  loading?: boolean;
+  icon?: ReactNode;
+};
+
+function Button({
+  variant = "primary",
+  size = "default",
+  fullWidth,
+  loading,
+  icon,
+  children,
+  className,
+  disabled,
+  type = "button",
+  ...props
+}: ButtonProps) {
+  return (
+    <button
+      className={cx(
+        "btn",
+        variant === "primary" && "btn-primary",
+        variant === "ghost" && "btn-ghost",
+        variant === "danger" && "btn-danger-solid",
+        size === "sm" && "btn-sm",
+        fullWidth && "full-width",
+        className
+      )}
+      type={type}
+      disabled={disabled || loading}
+      {...props}
+    >
+      {loading ? <Spinner /> : icon}
+      {children}
+    </button>
+  );
+}
+
+type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  compact?: boolean;
+};
+
+function IconButton({ compact, children, className, type = "button", ...props }: IconButtonProps) {
+  return (
+    <button className={cx("icon-btn", compact && "compact", className)} type={type} {...props}>
+      {children}
+    </button>
+  );
+}
+
 export default function App() {
   const queryClient = useQueryClient();
   const { path, navigate } = useRoute();
@@ -111,8 +200,18 @@ export default function App() {
     const id = Date.now() + Math.random();
     setToasts((items) => [{ id, message, category }, ...items]);
     window.setTimeout(() => {
+      setToasts((items) => items.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast)));
+      window.setTimeout(() => {
+        setToasts((items) => items.filter((toast) => toast.id !== id));
+      }, UI_EXIT_MS);
+    }, 5000);
+  };
+
+  const closeToast = (id: number) => {
+    setToasts((items) => items.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast)));
+    window.setTimeout(() => {
       setToasts((items) => items.filter((toast) => toast.id !== id));
-    }, 5200);
+    }, UI_EXIT_MS);
   };
 
   const sessionQuery = useQuery({
@@ -141,7 +240,7 @@ export default function App() {
     return (
       <>
         <AuthView notify={notify} />
-        <ToastStack toasts={toasts} />
+        <ToastStack toasts={toasts} onDismiss={closeToast} />
       </>
     );
   }
@@ -167,8 +266,8 @@ export default function App() {
           <DashboardPage notify={notify} interval={session.check_interval} />
         )}
       </main>
-      <footer>job-tracker · jobs.overbay.app · checks every {session.check_interval}h</footer>
-      <ToastStack toasts={toasts} />
+      <footer>job-tracker / jobs.overbay.app / checks every {session.check_interval}h</footer>
+      <ToastStack toasts={toasts} onDismiss={closeToast} />
     </>
   );
 }
@@ -205,9 +304,9 @@ function TopNav({
     return () => window.removeEventListener("beforeinstallprompt", handler);
   }, []);
 
-  const navLink = (label: string, href: string) => (
+  const navLink = (label: string, href: string, mobile = false) => (
     <button
-      className={`nav-link ${path === href ? "active" : ""}`}
+      className={cx(mobile ? "nav-mobile-link" : "nav-link", path === href && "active")}
       type="button"
       onClick={() => {
         navigate(href);
@@ -254,8 +353,8 @@ function TopNav({
 
       <div className={`nav-mobile-menu ${mobileOpen ? "open" : ""}`}>
         <div className="nav-mobile-email">{session.user?.email}</div>
-        {navLink("Dashboard", "/")}
-        {navLink("Jobs", "/jobs")}
+        {navLink("Dashboard", "/", true)}
+        {navLink("Jobs", "/jobs", true)}
         {installPrompt && (
           <button className="nav-mobile-link" type="button" onClick={() => installPrompt.prompt()}>
             Install app
@@ -291,35 +390,35 @@ function AuthView({ notify }: { notify: (message: string, category?: Category) =
 
   return (
     <main className="auth-wrap">
-        <section className="auth-card">
-          <div className="auth-logo">
-            <span className="auth-logo-mark">
-              <img src="/static/logo.png" alt="" />
-            </span>
-            <span>
-              <span className="auth-title">Job Tracker</span>
-              <span className="auth-sub">Watch careers pages without babysitting tabs.</span>
-            </span>
+      <section className="auth-card">
+        <div className="auth-logo">
+          <span className="auth-logo-mark">
+            <img src="/static/logo.png" alt="" />
+          </span>
+          <span>
+            <span className="auth-title">Job Tracker</span>
+            <span className="auth-sub">Watch careers pages without babysitting tabs.</span>
+          </span>
+        </div>
+
+        <form onSubmit={submit}>
+          <div className="field stacked">
+            <label>Email</label>
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
           </div>
+          <div className="field stacked">
+            <label>Password</label>
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={mode === "register" ? 8 : undefined} />
+          </div>
+          <Button fullWidth type="submit" loading={mutation.isPending}>
+            {mode === "login" ? "Log In" : "Create Account"}
+          </Button>
+        </form>
 
-          <form onSubmit={submit}>
-            <div className="field stacked">
-              <label>Email</label>
-              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-            </div>
-            <div className="field stacked">
-              <label>Password</label>
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={mode === "register" ? 8 : undefined} />
-            </div>
-            <button className="btn btn-primary full-width" type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? <Spinner /> : mode === "login" ? "Log In" : "Create Account"}
-            </button>
-          </form>
-
-          <button className="auth-switch" type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
-            {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
-          </button>
-        </section>
+        <button className="auth-switch" type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+          {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
+        </button>
+      </section>
     </main>
   );
 }
@@ -386,14 +485,12 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
       <div className="section-title-row" id="alerts-section">
         <span>Current Job Alerts ({dashboard.stats.alerts})</span>
         <div className="section-actions">
-          <button className="btn btn-ghost btn-sm" type="button" onClick={() => setReorderMode(!reorderMode)}>
-            <ChevronsUpDown size={15} />
+          <Button variant="ghost" size="sm" icon={<ChevronsUpDown size={15} />} onClick={() => setReorderMode(!reorderMode)}>
             {reorderMode ? "Done" : "Reorder"}
-          </button>
-          <button className="btn btn-ghost btn-sm" type="button" onClick={() => checkAll.mutate()} disabled={checkAll.isPending}>
-            {checkAll.isPending ? <Spinner /> : <RefreshCcw size={15} />}
+          </Button>
+          <Button variant="ghost" size="sm" loading={checkAll.isPending} icon={<RefreshCcw size={15} />} onClick={() => checkAll.mutate()}>
             Check All Now
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -468,14 +565,12 @@ function CreateAlert({ notify, onAction }: { notify: (message: string, category?
         <form onSubmit={submit}>
           <WatchFields input={input} onChange={setInput} />
           <div className="form-actions">
-            <button className="btn btn-primary" type="submit" disabled={create.isPending}>
-              {create.isPending ? <Spinner /> : <Plus size={16} />}
+            <Button type="submit" loading={create.isPending} icon={<Plus size={16} />}>
               Add Alert & Check
-            </button>
-            <button className="btn btn-ghost" type="button" onClick={() => previewMutation.mutate(input)} disabled={previewMutation.isPending}>
-              {previewMutation.isPending ? <Spinner /> : <Eye size={16} />}
+            </Button>
+            <Button variant="ghost" loading={previewMutation.isPending} icon={<Eye size={16} />} onClick={() => previewMutation.mutate(input)}>
               Preview Results
-            </button>
+            </Button>
           </div>
         </form>
       </section>
@@ -548,8 +643,12 @@ function WatchCard({
       <div className="watch-card">
         {reorderMode && (
           <div className="watch-reorder">
-            <button className="icon-btn compact" type="button" onClick={() => onMove(watch.id, -1)} aria-label="Move up">↑</button>
-            <button className="icon-btn compact" type="button" onClick={() => onMove(watch.id, 1)} aria-label="Move down">↓</button>
+            <IconButton compact onClick={() => onMove(watch.id, -1)} aria-label="Move up">
+              <ChevronUp size={16} />
+            </IconButton>
+            <IconButton compact onClick={() => onMove(watch.id, 1)} aria-label="Move down">
+              <ChevronDown size={16} />
+            </IconButton>
           </div>
         )}
 
@@ -565,7 +664,7 @@ function WatchCard({
           <div className="watch-company">{watch.company_name}</div>
           <div className="watch-created">
             Created {formatDate(watch.created_at).slice(0, 10)}
-            {watch.last_checked ? <> · Last checked {formatDate(watch.last_checked)}</> : null}
+            {watch.last_checked ? <> - Last checked {formatDate(watch.last_checked)}</> : null}
           </div>
           <div className="watch-meta">
             {watch.careers_url && (
@@ -591,7 +690,7 @@ function WatchCard({
               {watch.jobs.map((job) => (
                 <JobRow key={job.job_id} job={job} />
               ))}
-              {watch.job_count > 5 && <div className="more-jobs">+{watch.job_count - 5} more · view all jobs</div>}
+              {watch.job_count > 5 && <div className="more-jobs">+{watch.job_count - 5} more / view all jobs</div>}
             </div>
           ) : (
             <div className="watch-empty">No matching listings found yet. Run a check to scan now.</div>
@@ -599,9 +698,9 @@ function WatchCard({
         </div>
 
         <div className="watch-actions">
-          <button className="icon-btn" type="button" onClick={() => setMenuOpen(!menuOpen)} aria-label={`Alert settings for ${watch.company_name}`}>
+          <IconButton onClick={() => setMenuOpen(!menuOpen)} aria-label={`Alert settings for ${watch.company_name}`}>
             <MoreVertical size={18} />
-          </button>
+          </IconButton>
           {menuOpen && (
             <div className="dropdown-panel menu-list">
               <MenuButton icon={<RefreshCcw size={16} />} label={check.isPending ? "Checking..." : "Check"} onClick={() => check.mutate()} />
@@ -630,7 +729,7 @@ function WatchCard({
 
 function MenuButton({ icon, label, danger, onClick }: { icon: ReactNode; label: string; danger?: boolean; onClick: () => void }) {
   return (
-    <button className={`menu-item ${danger ? "menu-item-danger" : ""}`} type="button" onClick={onClick}>
+    <button className={cx("menu-item", danger && "menu-item-danger")} type="button" onClick={onClick}>
       {icon}
       <span>{label}</span>
     </button>
@@ -643,7 +742,7 @@ function JobRow({ job }: { job: Job }) {
       <div className="job-dot" />
       <div className="job-title">
         {job.title}
-        {job.location ? <span className="job-location-inline"> · {job.location}</span> : null}
+        {job.location ? <span className="job-location-inline"> - {job.location}</span> : null}
       </div>
       {job.url && (
         <a className="job-link" href={job.url} target="_blank" rel="noreferrer">
@@ -701,14 +800,12 @@ function EditWatchModal({
         <form onSubmit={(event) => { event.preventDefault(); update.mutate(); }}>
           <WatchFields input={input} onChange={setInput} />
           <div className="modal-actions">
-            <button className="btn btn-ghost" type="button" onClick={() => previewMutation.mutate()} disabled={previewMutation.isPending}>
-              {previewMutation.isPending ? <Spinner /> : <Eye size={16} />}
+            <Button variant="ghost" loading={previewMutation.isPending} icon={<Eye size={16} />} onClick={() => previewMutation.mutate()}>
               Preview
-            </button>
-            <button className="btn btn-primary" type="submit" disabled={update.isPending}>
-              {update.isPending ? <Spinner /> : <Check size={16} />}
+            </Button>
+            <Button type="submit" loading={update.isPending} icon={<Check size={16} />}>
               Save & Check
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>
@@ -764,11 +861,10 @@ function NotificationsModal({
         </label>
       </div>
       <div className="modal-actions">
-        <button className="btn btn-ghost" type="button" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" type="button" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
-          {mutation.isPending ? <Spinner /> : <Check size={16} />}
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button loading={mutation.isPending} icon={<Check size={16} />} onClick={() => mutation.mutate()}>
           Save Notifications
-        </button>
+        </Button>
       </div>
     </Modal>
   );
@@ -814,8 +910,8 @@ function ConfirmModal({
     <Modal open={open} onClose={onClose} title={title}>
       <p className="confirm-detail">{detail}</p>
       <div className="modal-actions">
-        <button className="btn btn-ghost" type="button" onClick={onClose}>Cancel</button>
-        <button className={`btn ${danger ? "btn-danger-solid" : "btn-primary"}`} type="button" onClick={onConfirm}>{confirmLabel}</button>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>{confirmLabel}</Button>
       </div>
     </Modal>
   );
@@ -834,6 +930,8 @@ function Modal({
   children: ReactNode;
   onClose: () => void;
 }) {
+  const { present, closing } = usePresence(open);
+
   useEffect(() => {
     if (!open) return;
     const handler = (event: KeyboardEvent) => {
@@ -843,11 +941,11 @@ function Modal({
     return () => document.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!present) return null;
 
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="app-modal" onMouseDown={(event) => event.stopPropagation()}>
+    <div className={cx("modal-backdrop", closing && "closing")} onMouseDown={onClose}>
+      <section className={cx("app-modal", closing && "closing")} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <div className="modal-title">{title}</div>
@@ -889,7 +987,7 @@ function JobsPage({ notify }: { notify: (message: string, category?: Category) =
               <div className="jobs-table-row" key={`${job.watch_id}-${job.job_id}`}>
                 <div>
                   <div className="job-table-title">{job.title}</div>
-                  <div className="job-table-meta">{job.company_name} · {job.location || "Location not listed"} · Found {formatDate(job.found_at || null)}</div>
+                  <div className="job-table-meta">{job.company_name} / {job.location || "Location not listed"} / Found {formatDate(job.found_at || null)}</div>
                 </div>
                 {job.url && <a className="btn btn-ghost btn-sm" href={job.url} target="_blank" rel="noreferrer">Apply <ExternalLink size={14} /></a>}
               </div>
@@ -928,12 +1026,17 @@ function Spinner() {
   return <span className="spinner" aria-hidden="true" />;
 }
 
-function ToastStack({ toasts }: { toasts: Toast[] }) {
+function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
   if (!toasts.length) return null;
   return (
     <div className="flash-stack has-flashes" aria-live="polite">
       {toasts.map((toast) => (
-        <div className={`flash ${toast.category}`} key={toast.id}>{toast.message}</div>
+        <div className={cx("flash", toast.category, toast.leaving && "leaving")} key={toast.id}>
+          <span>{toast.message}</span>
+          <button className="flash-close" type="button" aria-label="Dismiss notification" onClick={() => onDismiss(toast.id)}>
+            <X size={14} />
+          </button>
+        </div>
       ))}
     </div>
   );
