@@ -577,7 +577,7 @@ class FlaskRouteTests(unittest.TestCase):
         self.assertEqual(payload['stats']['alerts'], 1)
         self.assertEqual(db.get_watch_for_user(watch_id, user['id'])['email_enabled'], 0)
 
-    def test_notification_settings_can_return_updated_card_json(self):
+    def test_notification_settings_can_return_saved_settings_json(self):
         user, token = self._login()
         watch_id = db.add_watch(
             user['id'],
@@ -598,8 +598,10 @@ class FlaskRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(payload['ok'])
-        self.assertIn('email paused', payload['html'])
-        self.assertIn('push enabled', payload['html'])
+        self.assertEqual(payload['watch_id'], watch_id)
+        self.assertEqual(payload['settings'], {'email_enabled': False, 'push_enabled': True})
+        self.assertNotIn('html', payload)
+        self.assertNotIn('replace_target', payload)
         self.assertEqual(watch['email_enabled'], 0)
         self.assertEqual(watch['push_enabled'], 1)
 

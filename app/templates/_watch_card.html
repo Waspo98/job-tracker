@@ -33,7 +33,7 @@
                 Created {{ w.created_at[:10] }}
                 {% if w.last_checked %} &middot; Last checked {{ w.last_checked[:16] }}{% endif %}
             </div>
-            <div class="watch-meta">
+            <div class="watch-meta" data-watch-meta>
                 {% if w.careers_url %}
                     <a href="{{ w.careers_url }}" target="_blank" rel="noopener noreferrer" class="chip" style="color:var(--accent-light);text-decoration:none;">{{ w.careers_url[:55] }}{% if w.careers_url|length > 55 %}&hellip;{% endif %} &nearr;</a>
                 {% endif %}
@@ -42,14 +42,14 @@
                 {% else %}
                     <span class="chip">all roles</span>
                 {% endif %}
-                {% if not w.email_enabled %}
-                    <span class="chip warn">email paused</span>
+                {% if w.email_enabled is not none and not w.email_enabled %}
+                    <span class="chip warn" data-notification-chip="email">email paused</span>
                 {% endif %}
                 {% if w.push_enabled %}
-                    <span class="chip kw">push enabled</span>
+                    <span class="chip kw" data-notification-chip="push">push enabled</span>
                 {% endif %}
                 {% if w.last_error %}
-                    <span class="chip warn">last scan failed</span>
+                    <span class="chip warn" data-watch-error-chip>last scan failed</span>
                 {% endif %}
             </div>
 
@@ -178,7 +178,7 @@
             </div>
             <button type="button" class="modal-close" data-modal-close aria-label="Close notification dialog">&times;</button>
         </div>
-        <form action="/notifications/{{ w.id }}" method="POST" class="modal-body" data-async-form data-close-modal-on-success>
+        <form action="/notifications/{{ w.id }}" method="POST" class="modal-body" data-notification-form>
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="push_enabled" value="{{ 1 if w.push_enabled else 0 }}">
             <div class="notification-options">
@@ -187,7 +187,7 @@
                         <span class="notification-title">Email alerts</span>
                         <span class="notification-copy">Send new matches to your account email.</span>
                     </span>
-                    <input type="checkbox" name="email_enabled" value="1" {% if w.email_enabled %}checked{% endif %}>
+                    <input type="checkbox" name="email_enabled" value="1" {% if w.email_enabled is none or w.email_enabled %}checked{% endif %}>
                 </label>
                 <label class="notification-option disabled">
                     <span>

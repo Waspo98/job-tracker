@@ -1249,6 +1249,7 @@
     function openModal(dialog) {
         if (!dialog || isModalOpen(dialog)) return;
         closeAllDropdowns();
+        resetNotificationForms(dialog);
         dialog.removeAttribute('data-closing');
         if (typeof dialog.showModal === 'function') {
             dialog.showModal();
@@ -1275,6 +1276,7 @@
                 dialog.removeAttribute('open');
             }
             dialog.removeAttribute('data-closing');
+            resetNotificationForms(dialog);
         };
 
         dialog.setAttribute('data-closing', '');
@@ -1290,6 +1292,7 @@
             dialog.removeAttribute('open');
         }
         dialog.removeAttribute('data-closing');
+        resetNotificationForms(dialog);
     }
 
     function showFlash(message, category = 'info') {
@@ -1342,6 +1345,8 @@
 
         const replacement = template.content.firstElementChild;
         if (!replacement) return null;
+        if (target.matches('.app-modal')) closeModalNow(target);
+        target.querySelectorAll('.app-modal').forEach(closeModalNow);
         target.replaceWith(replacement);
         if (preserveReorderMode && replacement.matches('[data-reorder-list]')) {
             setReorderMode(true);
@@ -1362,6 +1367,122 @@
             if (button.dataset.idleHtml) button.innerHTML = button.dataset.idleHtml;
             delete button.dataset.idleHtml;
             button.disabled = false;
+        }
+    }
+
+    function resetNotificationForms(dialog) {
+        if (!dialog) return;
+        dialog.querySelectorAll('form[data-notification-form]').forEach((form) => form.reset());
+    }
+
+    function notificationSettingsFromForm(form) {
+        const emailInput = form.querySelector('input[name="email_enabled"]');
+        const pushInput = form.querySelector('input[type="hidden"][name="push_enabled"]');
+        return {
+            email_enabled: Boolean(emailInput && emailInput.checked),
+            push_enabled: Boolean(pushInput && pushInput.value === '1'),
+        };
+    }
+
+    function syncNotificationFormDefaults(form, settings) {
+        const emailEnabled = Boolean(settings && settings.email_enabled);
+        const pushEnabled = Boolean(settings && settings.push_enabled);
+        const emailInput = form.querySelector('input[name="email_enabled"]');
+        const pushHidden = form.querySelector('input[type="hidden"][name="push_enabled"]');
+        const pushCheckbox = form.querySelector('input[type="checkbox"][name="push_enabled"]');
+
+        if (emailInput) {
+            emailInput.checked = emailEnabled;
+            emailInput.defaultChecked = emailEnabled;
+        }
+        if (pushHidden) {
+            pushHidden.value = pushEnabled ? '1' : '0';
+            pushHidden.defaultValue = pushHidden.value;
+        }
+        if (pushCheckbox) {
+            pushCheckbox.checked = pushEnabled;
+            pushCheckbox.defaultChecked = pushEnabled;
+        }
+    }
+
+    function setNotificationChip(meta, type, visible) {
+        if (!meta) return;
+        let chip = meta.querySelector(`[data-notification-chip="${type}"]`);
+
+        if (!visible) {
+            if (chip) chip.remove();
+            return;
+        }
+
+        if (!chip) {
+            chip = document.createElement('span');
+            chip.dataset.notificationChip = type;
+            const errorChip = meta.querySelector('[data-watch-error-chip]');
+            meta.insertBefore(chip, errorChip || null);
+        }
+
+        if (type === 'email') {
+            chip.className = 'chip warn';
+            chip.textContent = 'email paused';
+        } else {
+            chip.className = 'chip kw';
+            chip.textContent = 'push enabled';
+        }
+    }
+
+    function updateNotificationChips(form, settings) {
+        const fragment = form.closest('[data-watch-fragment]');
+        const meta = fragment && fragment.querySelector('[data-watch-meta]');
+        setNotificationChip(meta, 'email', !settings.email_enabled);
+        setNotificationChip(meta, 'push', settings.push_enabled);
+    }
+
+    async function submitNotificationForm(form, submitter) {
+        const action = submitter && submitter.formAction ? submitter.formAction : form.action;
+        const method = (form.method || 'POST').toUpperCase();
+        const data = new FormData(form);
+        const csrfToken = data.get('_csrf_token') || '';
+
+        closeAllDropdowns();
+        setButtonBusy(submitter, true);
+        form.setAttribute('aria-busy', 'true');
+
+        try {
+            const response = await fetch(action, {
+                method,
+                body: data,
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'fetch',
+                    'X-CSRF-Token': csrfToken,
+                },
+                credentials: 'same-origin',
+            });
+
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                if (response.redirected && response.url && new URL(response.url).pathname === '/login') {
+                    window.location.assign(response.url);
+                    return;
+                }
+                throw new Error('Could not confirm notification settings were saved.');
+            }
+
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.message || 'Could not update notification settings.');
+            }
+
+            const settings = payload.settings || notificationSettingsFromForm(form);
+            syncNotificationFormDefaults(form, settings);
+            updateNotificationChips(form, settings);
+            closeModal(form.closest('.app-modal'));
+            showFlash(payload.message, payload.category || 'success');
+        } catch (error) {
+            showFlash(error.message || 'Could not update notification settings.', 'error');
+        } finally {
+            setButtonBusy(submitter, false);
+            form.removeAttribute('aria-busy');
         }
     }
 
@@ -1404,10 +1525,6 @@
             }
 
             const payload = await response.json();
-            const modal = form.closest('.app-modal');
-            if (response.ok && payload.ok && modal && form.hasAttribute('data-close-modal-on-success')) {
-                closeModalNow(modal);
-            }
             if (payload.html && payload.replace_target) {
                 replaceFragment(payload.replace_target, payload.html, payload.replace_mode);
             }
@@ -1686,6 +1803,13 @@
     }, true);
 
     document.addEventListener('submit', (event) => {
+        const notificationForm = event.target.closest('form[data-notification-form]');
+        if (notificationForm) {
+            event.preventDefault();
+            submitNotificationForm(notificationForm, event.submitter);
+            return;
+        }
+
         const form = event.target.closest('form[data-async-form]');
         if (!form) return;
         event.preventDefault();

@@ -421,6 +421,23 @@ def _json_watch_response(watch_id, message, category='success', status=200):
     }), status
 
 
+def _json_notification_response(watch_id, message, category='success', status=200):
+    watch = db.get_watch_for_user(watch_id, current_user.id)
+    if not watch:
+        return jsonify({'ok': False, 'message': 'Alert not found.', 'category': 'error'}), 404
+
+    return jsonify({
+        'ok': status < 400,
+        'message': message,
+        'category': category,
+        'watch_id': watch_id,
+        'settings': {
+            'email_enabled': _email_enabled(watch),
+            'push_enabled': _push_enabled(watch),
+        },
+    }), status
+
+
 def _json_watch_list_response(message, category='success', status=200):
     watch_data = _watch_data_for_user(current_user.id)
     return jsonify({
@@ -873,7 +890,7 @@ def update_notifications(watch_id):
 
     message = f'Notification settings saved for {watch["company_name"]}.'
     if _wants_json():
-        return _json_watch_response(watch_id, message, 'success')
+        return _json_notification_response(watch_id, message, 'success')
     flash(message, 'success')
     return redirect(url_for('dashboard') + f'#watch-{watch_id}')
 
