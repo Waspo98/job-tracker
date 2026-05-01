@@ -874,14 +874,12 @@ function WatchCard({
           <IconButton onClick={() => setMenuOpen(!menuOpen)} aria-label={`Alert settings for ${watch.company_name}`}>
             <MoreVertical size={18} />
           </IconButton>
-          {menuOpen && (
-            <div className="dropdown-panel menu-list">
-              <MenuButton icon={<RefreshCcw size={16} />} label={check.isPending ? "Checking..." : "Check"} onClick={() => check.mutate()} />
-              <MenuButton icon={<Bell size={16} />} label="Notifications" onClick={() => { setNotifications(true); setMenuOpen(false); }} />
-              <MenuButton icon={<Edit3 size={16} />} label="Edit" onClick={() => { setEditing(true); setMenuOpen(false); }} />
-              <MenuButton danger icon={<Trash2 size={16} />} label="Delete" onClick={() => { setConfirmDelete(true); setMenuOpen(false); }} />
-            </div>
-          )}
+          <DropdownMenu open={menuOpen}>
+            <MenuButton icon={<RefreshCcw size={16} />} label={check.isPending ? "Checking..." : "Check"} onClick={() => check.mutate()} />
+            <MenuButton icon={<Bell size={16} />} label="Notifications" onClick={() => { setNotifications(true); setMenuOpen(false); }} />
+            <MenuButton icon={<Edit3 size={16} />} label="Edit" onClick={() => { setEditing(true); setMenuOpen(false); }} />
+            <MenuButton danger icon={<Trash2 size={16} />} label="Delete" onClick={() => { setConfirmDelete(true); setMenuOpen(false); }} />
+          </DropdownMenu>
         </div>
       </div>
 
@@ -898,6 +896,17 @@ function WatchCard({
         onConfirm={() => deleteMutation.mutate()}
       />
     </article>
+  );
+}
+
+function DropdownMenu({ open, children }: { open: boolean; children: ReactNode }) {
+  const { present, closing } = usePresence(open);
+  if (!present) return null;
+
+  return (
+    <div className={cx("dropdown-panel", "menu-list", closing && "closing")}>
+      {children}
+    </div>
   );
 }
 

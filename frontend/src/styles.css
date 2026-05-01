@@ -767,6 +767,13 @@ footer {
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  transform-origin: top right;
+  animation: dropdownMenuIn 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dropdown-panel.closing {
+  pointer-events: none;
+  animation: dropdownMenuOut 140ms ease-in forwards;
 }
 
 .menu-item {
@@ -1136,6 +1143,28 @@ footer {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes dropdownMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-7px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dropdownMenuOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
   }
 }
 
