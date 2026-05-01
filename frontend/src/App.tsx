@@ -195,6 +195,7 @@ export default function App() {
   const queryClient = useQueryClient();
   const { path, navigate } = useRoute();
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
 
   const notify = (message: string, category: Category = "info") => {
     const id = Date.now() + Math.random();
@@ -213,6 +214,22 @@ export default function App() {
       setToasts((items) => items.filter((toast) => toast.id !== id));
     }, UI_EXIT_MS);
   };
+
+  const logoutMutation = useMutation({
+    mutationFn: async () => {
+      await api.logout();
+      return api.session();
+    },
+    onSuccess: (fresh) => {
+      queryClient.removeQueries({ queryKey: ["dashboard"] });
+      queryClient.removeQueries({ queryKey: ["jobs"] });
+      setCsrfToken(fresh.csrf_token);
+      queryClient.setQueryData(["session"], fresh);
+      setConfirmLogoutOpen(false);
+      navigate("/");
+    },
+    onError: (error) => notify(messageFromError(error), "error")
+  });
 
   const sessionQuery = useQuery({
     queryKey: ["session"],
@@ -246,19 +263,13 @@ export default function App() {
   }
 
   const session = sessionQuery.data;
-
-  const logout = async () => {
-    await api.logout();
-    queryClient.clear();
-    const fresh = await api.session();
-    setCsrfToken(fresh.csrf_token);
-    queryClient.setQueryData(["session"], fresh);
-    navigate("/");
+  const closeLogoutConfirm = () => {
+    if (!logoutMutation.isPending) setConfirmLogoutOpen(false);
   };
 
   return (
     <>
-      <TopNav session={session} path={path} navigate={navigate} logout={logout} />
+      <TopNav session={session} path={path} navigate={navigate} logout={() => setConfirmLogoutOpen(true)} />
       <main className="container">
         {path.startsWith("/jobs") ? (
           <JobsPage notify={notify} />
@@ -267,6 +278,15 @@ export default function App() {
         )}
       </main>
       <footer>job-tracker / jobs.overbay.app / checks every {session.check_interval}h</footer>
+      <ConfirmModal
+        open={confirmLogoutOpen}
+        title="Log out?"
+        detail="You will return to the sign-in screen on this device."
+        confirmLabel="Log Out"
+        pending={logoutMutation.isPending}
+        onClose={closeLogoutConfirm}
+        onConfirm={() => logoutMutation.mutate()}
+      />
       <ToastStack toasts={toasts} onDismiss={closeToast} />
     </>
   );
@@ -317,6 +337,11 @@ function TopNav({
     </button>
   );
 
+  const requestLogout = () => {
+    setMobileOpen(false);
+    logout();
+  };
+
   return (
     <nav>
       <div className="nav-inner">
@@ -326,7 +351,7 @@ function TopNav({
           </span>
           <span>
             <span className="nav-logo-text">Job Tracker</span>
-            <span className="nav-logo-sub">career signal monitor</span>
+            <span className="nav-logo-sub">jobs.overbay.app</span>
           </span>
         </button>
 
@@ -339,7 +364,7 @@ function TopNav({
               Install
             </button>
           )}
-          <button className="nav-link" type="button" onClick={logout}>
+          <button className="nav-link" type="button" onClick={requestLogout}>
             Logout
           </button>
         </div>
@@ -360,7 +385,7 @@ function TopNav({
             Install app
           </button>
         )}
-        <button className="nav-mobile-link" type="button" onClick={logout}>
+        <button className="nav-mobile-link" type="button" onClick={requestLogout}>
           Logout
         </button>
       </div>
@@ -565,11 +590,13 @@ function CreateAlert({ notify, onAction }: { notify: (message: string, category?
         <form onSubmit={submit}>
           <WatchFields input={input} onChange={setInput} />
           <div className="form-actions">
-            <Button type="submit" loading={create.isPending} icon={<Plus size={16} />}>
-              Add Alert & Check
+            <Button type="submit" loading={create.isPending} icon={<Plus size={16} />} aria-label="Add alert and check">
+              <span className="label-desktop">Add Alert & Check</span>
+              <span className="label-mobile">Add & Check</span>
             </Button>
-            <Button variant="ghost" loading={previewMutation.isPending} icon={<Eye size={16} />} onClick={() => previewMutation.mutate(input)}>
-              Preview Results
+            <Button variant="ghost" loading={previewMutation.isPending} icon={<Eye size={16} />} onClick={() => previewMutation.mutate(input)} aria-label="Preview results">
+              <span className="label-desktop">Preview Results</span>
+              <span className="label-mobile">Preview</span>
             </Button>
           </div>
         </form>
@@ -718,8 +745,9 @@ function WatchCard({
         open={confirmDelete}
         title={`Delete ${watch.company_name}?`}
         detail="This removes the alert and hides its saved listings from your dashboard."
-        confirmLabel={deleteMutation.isPending ? "Deleting..." : "Delete"}
+        confirmLabel="Delete"
         danger
+        pending={deleteMutation.isPending}
         onClose={() => setConfirmDelete(false)}
         onConfirm={() => deleteMutation.mutate()}
       />
@@ -895,6 +923,7 @@ function ConfirmModal({
   detail,
   confirmLabel,
   danger,
+  pending,
   onClose,
   onConfirm
 }: {
@@ -903,15 +932,20 @@ function ConfirmModal({
   detail: string;
   confirmLabel: string;
   danger?: boolean;
+  pending?: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }) {
+  const handleClose = () => {
+    if (!pending) onClose();
+  };
+
   return (
-    <Modal open={open} onClose={onClose} title={title}>
+    <Modal open={open} onClose={handleClose} title={title}>
       <p className="confirm-detail">{detail}</p>
       <div className="modal-actions">
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>{confirmLabel}</Button>
+        <Button variant="ghost" disabled={pending} onClick={handleClose}>Cancel</Button>
+        <Button variant={danger ? "danger" : "primary"} loading={pending} onClick={onConfirm}>{confirmLabel}</Button>
       </div>
     </Modal>
   );

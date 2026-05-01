@@ -505,6 +505,10 @@ footer {
   width: 100%;
 }
 
+.label-mobile {
+  display: none;
+}
+
 .watch-list {
   display: grid;
   gap: 10px;
@@ -1165,9 +1169,47 @@ footer {
     display: flex;
   }
 
-  .stats-row,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .stats-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 28px;
+  }
+
+  .stat {
+    min-width: 0;
+    padding: 12px 6px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 23px;
+    line-height: 1.15;
+  }
+
+  .stat-label {
+    margin-top: 4px;
+    font-size: 9px;
+    letter-spacing: 0.02em;
+    line-height: 1.15;
+    white-space: nowrap;
+  }
+
+  .form-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+    min-width: 0;
+    padding-left: 10px;
+    padding-right: 10px;
   }
 
   .section-title-row {
@@ -1220,6 +1262,44 @@ footer {
 
   .job-link {
     margin-left: 15px;
+  }
+
+  .label-desktop {
+    display: none;
+  }
+
+  .label-mobile {
+    display: inline;
+  }
+
+  .form-actions .btn {
+    gap: 5px;
+    padding-left: 7px;
+    padding-right: 7px;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+
+  .form-actions .btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .stats-row {
+    gap: 6px;
+  }
+
+  .stat {
+    padding: 10px 4px;
+  }
+
+  .stat-value {
+    font-size: 21px;
+  }
+
+  .stat-label {
+    font-size: 8.5px;
+    letter-spacing: 0;
   }
 }
 
