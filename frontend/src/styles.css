@@ -468,6 +468,22 @@ footer {
   cursor: wait;
 }
 
+.nav-logo:focus-visible,
+.nav-link:focus-visible,
+.nav-mobile-link:focus-visible,
+.nav-hamburger:focus-visible,
+.btn:focus-visible,
+.icon-btn:focus-visible,
+.menu-item:focus-visible,
+.modal-close:focus-visible,
+.auth-switch:focus-visible,
+.flash-close:focus-visible,
+.job-link:focus-visible,
+.chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow-strong);
+}
+
 .btn-primary {
   background: var(--accent);
   color: #fff;
@@ -799,12 +815,27 @@ footer {
   color: var(--accent-light);
 }
 
+.menu-item:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+
+.menu-item:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+
 .menu-item-danger {
   color: var(--red);
 }
 
 .menu-item-danger:hover {
   background: rgba(248, 81, 73, 0.1);
+  color: var(--red);
+}
+
+.menu-item-danger:disabled:hover {
+  background: transparent;
   color: var(--red);
 }
 

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import type { ButtonHTMLAttributes, CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
@@ -27,7 +27,6 @@ type Toast = {
 };
 
 type DragFrame = {
-  watchId: number;
   pointerId: number;
   offsetX: number;
   offsetY: number;
@@ -36,6 +35,9 @@ type DragFrame = {
   left: number;
   top: number;
 };
+
+type ButtonVariant = "primary" | "ghost" | "danger";
+type ButtonSize = "default" | "sm";
 
 const UI_EXIT_MS = 180;
 
@@ -148,9 +150,31 @@ function usePresence(active: boolean) {
   };
 }
 
+function buttonClasses({
+  variant,
+  size,
+  fullWidth,
+  className
+}: {
+  variant: ButtonVariant;
+  size: ButtonSize;
+  fullWidth?: boolean;
+  className?: string;
+}) {
+  return cx(
+    "btn",
+    variant === "primary" && "btn-primary",
+    variant === "ghost" && "btn-ghost",
+    variant === "danger" && "btn-danger-solid",
+    size === "sm" && "btn-sm",
+    fullWidth && "full-width",
+    className
+  );
+}
+
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "ghost" | "danger";
-  size?: "default" | "sm";
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   fullWidth?: boolean;
   loading?: boolean;
   icon?: ReactNode;
@@ -170,15 +194,7 @@ function Button({
 }: ButtonProps) {
   return (
     <button
-      className={cx(
-        "btn",
-        variant === "primary" && "btn-primary",
-        variant === "ghost" && "btn-ghost",
-        variant === "danger" && "btn-danger-solid",
-        size === "sm" && "btn-sm",
-        fullWidth && "full-width",
-        className
-      )}
+      className={buttonClasses({ variant, size, fullWidth, className })}
       type={type}
       disabled={disabled || loading}
       {...props}
@@ -186,6 +202,30 @@ function Button({
       {loading ? <Spinner /> : icon}
       {children}
     </button>
+  );
+}
+
+type ButtonLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  fullWidth?: boolean;
+  icon?: ReactNode;
+};
+
+function ButtonLink({
+  variant = "ghost",
+  size = "default",
+  fullWidth,
+  icon,
+  children,
+  className,
+  ...props
+}: ButtonLinkProps) {
+  return (
+    <a className={buttonClasses({ variant, size, fullWidth, className })} {...props}>
+      {icon}
+      {children}
+    </a>
   );
 }
 
@@ -253,9 +293,15 @@ export default function App() {
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
+      const register = () => {
         navigator.serviceWorker.register("/sw.js").catch(() => undefined);
-      });
+      };
+      if (document.readyState === "complete") {
+        register();
+      } else {
+        window.addEventListener("load", register);
+        return () => window.removeEventListener("load", register);
+      }
     }
   }, []);
 
@@ -604,7 +650,6 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
     dragOriginalIdsRef.current = current.watches.map((watch) => watch.id);
     dragOriginalDashboardRef.current = current;
     setDragFrame({
-      watchId,
       pointerId: event.pointerId,
       offsetX: event.clientX - rect.left,
       offsetY: event.clientY - rect.top,
@@ -874,8 +919,8 @@ function WatchCard({
           <IconButton onClick={() => setMenuOpen(!menuOpen)} aria-label={`Alert settings for ${watch.company_name}`}>
             <MoreVertical size={18} />
           </IconButton>
-          <DropdownMenu open={menuOpen}>
-            <MenuButton icon={<RefreshCcw size={16} />} label={check.isPending ? "Checking..." : "Check"} onClick={() => check.mutate()} />
+          <DropdownMenu open={menuOpen} onClose={() => setMenuOpen(false)}>
+            <MenuButton icon={<RefreshCcw size={16} />} label={check.isPending ? "Checking..." : "Check"} loading={check.isPending} onClick={() => check.mutate()} />
             <MenuButton icon={<Bell size={16} />} label="Notifications" onClick={() => { setNotifications(true); setMenuOpen(false); }} />
             <MenuButton icon={<Edit3 size={16} />} label="Edit" onClick={() => { setEditing(true); setMenuOpen(false); }} />
             <MenuButton danger icon={<Trash2 size={16} />} label="Delete" onClick={() => { setConfirmDelete(true); setMenuOpen(false); }} />
@@ -899,21 +944,57 @@ function WatchCard({
   );
 }
 
-function DropdownMenu({ open, children }: { open: boolean; children: ReactNode }) {
+function DropdownMenu({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const { present, closing } = usePresence(open);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      onClose();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, onClose]);
+
   if (!present) return null;
 
   return (
-    <div className={cx("dropdown-panel", "menu-list", closing && "closing")}>
+    <div className={cx("dropdown-panel", "menu-list", closing && "closing")} ref={menuRef} role="menu">
       {children}
     </div>
   );
 }
 
-function MenuButton({ icon, label, danger, onClick }: { icon: ReactNode; label: string; danger?: boolean; onClick: () => void }) {
+function MenuButton({
+  icon,
+  label,
+  danger,
+  loading,
+  disabled,
+  onClick
+}: {
+  icon: ReactNode;
+  label: string;
+  danger?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button className={cx("menu-item", danger && "menu-item-danger")} type="button" onClick={onClick}>
-      {icon}
+    <button className={cx("menu-item", danger && "menu-item-danger")} type="button" disabled={disabled || loading} onClick={onClick} role="menuitem">
+      {loading ? <Spinner /> : icon}
       <span>{label}</span>
     </button>
   );
@@ -1178,7 +1259,11 @@ function JobsPage({ notify }: { notify: (message: string, category?: Category) =
                   <div className="job-table-title">{job.title}</div>
                   <div className="job-table-meta">{job.company_name} / {job.location || "Location not listed"} / Found {formatDate(job.found_at || null)}</div>
                 </div>
-                {job.url && <a className="btn btn-ghost btn-sm" href={job.url} target="_blank" rel="noreferrer">Apply <ExternalLink size={14} /></a>}
+                {job.url && (
+                  <ButtonLink size="sm" href={job.url} target="_blank" rel="noreferrer" icon={<ExternalLink size={14} />}>
+                    Apply
+                  </ButtonLink>
+                )}
               </div>
             ))}
           </div>
