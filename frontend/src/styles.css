@@ -373,6 +373,10 @@ footer {
   justify-content: flex-end;
 }
 
+.form-actions {
+  margin-top: 20px;
+}
+
 .card {
   margin-bottom: 16px;
   padding: 24px;
@@ -514,6 +518,10 @@ footer {
   gap: 10px;
 }
 
+.watch-list.reordering {
+  user-select: none;
+}
+
 .watch-card {
   position: relative;
   display: grid;
@@ -527,16 +535,42 @@ footer {
 }
 
 .watch-list.reordering .watch-card {
-  grid-template-columns: 32px 38px minmax(0, 1fr) 40px;
+  grid-template-columns: 26px 38px minmax(0, 1fr) 40px;
   grid-template-areas:
-    "reorder icon summary actions"
-    "reorder . body actions";
+    "drag icon summary actions"
+    ". . body actions";
+  column-gap: 12px;
 }
 
-.watch-reorder {
-  grid-area: reorder;
-  display: grid;
-  gap: 6px;
+.watch-fragment.dragging {
+  opacity: 0.72;
+}
+
+.watch-fragment.dragging .watch-card {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow-strong), 0 18px 42px rgba(0, 0, 0, 0.28);
+}
+
+.watch-list.reordering .watch-fragment:not(.dragging) .watch-card {
+  transition: transform 170ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.watch-drag {
+  grid-area: drag;
+  align-self: start;
+}
+
+.drag-handle {
+  width: 26px;
+  height: 38px;
+  border-color: transparent;
+  color: var(--text-faint);
+  cursor: grab;
+  touch-action: none;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .watch-icon {
@@ -1232,9 +1266,9 @@ footer {
   }
 
   .watch-list.reordering .watch-card {
-    grid-template-columns: 32px 38px minmax(0, 1fr) 40px;
+    grid-template-columns: 26px 38px minmax(0, 1fr) 40px;
     grid-template-areas:
-      "reorder icon summary actions"
+      "drag icon summary actions"
       "body body body body";
   }
 

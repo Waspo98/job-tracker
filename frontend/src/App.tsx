@@ -1,16 +1,15 @@
-import { useEffect, useState } from "react";
-import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ButtonHTMLAttributes, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
   BriefcaseBusiness,
   Check,
-  ChevronDown,
-  ChevronUp,
   ChevronsUpDown,
   Edit3,
   ExternalLink,
   Eye,
+  GripVertical,
   MoreVertical,
   Plus,
   RefreshCcw,
@@ -451,6 +450,11 @@ function AuthView({ notify }: { notify: (message: string, category?: Category) =
 function DashboardPage({ notify, interval }: { notify: (message: string, category?: Category) => void; interval: number }) {
   const queryClient = useQueryClient();
   const [reorderMode, setReorderMode] = useState(false);
+  const [draggingId, setDraggingId] = useState<number | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const dragPointerIdRef = useRef<number | null>(null);
+  const dragOriginalIdsRef = useRef<number[]>([]);
+  const dragOriginalDashboardRef = useRef<Dashboard | null>(null);
 
   const dashboardQuery = useQuery({
     queryKey: ["dashboard"],
@@ -470,24 +474,117 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
 
   const reorder = useMutation({
     mutationFn: api.reorder,
-    onSuccess: handleAction,
-    onError: (error) => notify(messageFromError(error), "error")
+    onSuccess: (action) => {
+      dragOriginalIdsRef.current = [];
+      dragOriginalDashboardRef.current = null;
+      handleAction(action);
+    },
+    onError: (error) => {
+      if (dragOriginalDashboardRef.current) {
+        queryClient.setQueryData(["dashboard"], dragOriginalDashboardRef.current);
+      }
+      dragOriginalIdsRef.current = [];
+      dragOriginalDashboardRef.current = null;
+      notify(messageFromError(error), "error");
+    }
   });
 
-  const moveWatch = (watchId: number, direction: -1 | 1) => {
-    const current = queryClient.getQueryData<Dashboard>(["dashboard"]);
-    if (!current) return;
-    const index = current.watches.findIndex((watch) => watch.id === watchId);
-    const nextIndex = index + direction;
-    if (index < 0 || nextIndex < 0 || nextIndex >= current.watches.length) return;
-    const watches = [...current.watches];
-    const [item] = watches.splice(index, 1);
-    watches.splice(nextIndex, 0, item);
-    queryClient.setQueryData<Dashboard>(["dashboard"], {
-      watches,
-      stats: deriveStats(watches, current.stats.interval)
+  const setWatchOrder = (watches: Watch[]) => {
+    queryClient.setQueryData<Dashboard>(["dashboard"], (current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        watches,
+        stats: deriveStats(watches, current.stats.interval)
+      };
     });
-    reorder.mutate(watches.map((watch) => watch.id));
+  };
+
+  const moveDraggingWatch = (clientY: number) => {
+    const current = queryClient.getQueryData<Dashboard>(["dashboard"]);
+    const list = listRef.current;
+    if (!current || !list || draggingId === null) return;
+
+    const dragged = current.watches.find((watch) => watch.id === draggingId);
+    if (!dragged) return;
+
+    const staticCards = Array.from(list.querySelectorAll<HTMLElement>("[data-watch-fragment]:not(.dragging)"));
+    const afterElement = staticCards.reduce<{ offset: number; element: HTMLElement | null }>(
+      (closest, item) => {
+        const box = item.getBoundingClientRect();
+        const offset = clientY - box.top - box.height / 2;
+        if (offset < 0 && offset > closest.offset) return { offset, element: item };
+        return closest;
+      },
+      { offset: Number.NEGATIVE_INFINITY, element: null }
+    ).element;
+
+    const remaining = current.watches.filter((watch) => watch.id !== draggingId);
+    const afterId = afterElement ? Number(afterElement.dataset.watchId) : null;
+    const insertAt = afterId ? Math.max(0, remaining.findIndex((watch) => watch.id === afterId)) : remaining.length;
+    const nextWatches = [...remaining];
+    nextWatches.splice(insertAt, 0, dragged);
+    if (nextWatches.map((watch) => watch.id).join(",") === current.watches.map((watch) => watch.id).join(",")) return;
+    setWatchOrder(nextWatches);
+  };
+
+  const finishDraggingWatch = () => {
+    const current = queryClient.getQueryData<Dashboard>(["dashboard"]);
+    const originalIds = dragOriginalIdsRef.current;
+    const nextIds = current?.watches.map((watch) => watch.id) || [];
+
+    setDraggingId(null);
+    dragPointerIdRef.current = null;
+
+    if (originalIds.length && nextIds.length && originalIds.join(",") !== nextIds.join(",")) {
+      reorder.mutate(nextIds);
+    } else {
+      dragOriginalIdsRef.current = [];
+      dragOriginalDashboardRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (draggingId === null) return;
+
+    const handleMove = (event: globalThis.PointerEvent) => {
+      if (dragPointerIdRef.current !== event.pointerId) return;
+      event.preventDefault();
+      moveDraggingWatch(event.clientY);
+    };
+
+    const handleEnd = (event: globalThis.PointerEvent) => {
+      if (dragPointerIdRef.current !== event.pointerId) return;
+      finishDraggingWatch();
+    };
+
+    window.addEventListener("pointermove", handleMove, { passive: false });
+    window.addEventListener("pointerup", handleEnd);
+    window.addEventListener("pointercancel", handleEnd);
+
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleEnd);
+      window.removeEventListener("pointercancel", handleEnd);
+    };
+  }, [draggingId]);
+
+  const beginDraggingWatch = (watchId: number, event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!reorderMode) return;
+    const current = queryClient.getQueryData<Dashboard>(["dashboard"]);
+    if (!current || current.watches.length < 2 || reorder.isPending) return;
+
+    event.preventDefault();
+    dragPointerIdRef.current = event.pointerId;
+    dragOriginalIdsRef.current = current.watches.map((watch) => watch.id);
+    dragOriginalDashboardRef.current = current;
+    setDraggingId(watchId);
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture can fail if the browser already released it.
+    }
   };
 
   if (dashboardQuery.isLoading) return <PanelLoading label="Loading dashboard" />;
@@ -510,7 +607,7 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
       <div className="section-title-row" id="alerts-section">
         <span>Current Job Alerts ({dashboard.stats.alerts})</span>
         <div className="section-actions">
-          <Button variant="ghost" size="sm" icon={<ChevronsUpDown size={15} />} onClick={() => setReorderMode(!reorderMode)}>
+          <Button variant="ghost" size="sm" icon={<ChevronsUpDown size={15} />} onClick={() => setReorderMode(!reorderMode)} disabled={reorder.isPending}>
             {reorderMode ? "Done" : "Reorder"}
           </Button>
           <Button variant="ghost" size="sm" loading={checkAll.isPending} icon={<RefreshCcw size={15} />} onClick={() => checkAll.mutate()}>
@@ -519,7 +616,7 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
         </div>
       </div>
 
-      <div className={`watch-list ${reorderMode ? "reordering" : ""}`}>
+      <div className={cx("watch-list", reorderMode && "reordering")} ref={listRef}>
         {dashboard.watches.length === 0 ? (
           <EmptyState title="No alerts yet" detail="Add a company careers page to start watching for new roles." />
         ) : (
@@ -528,7 +625,8 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
               key={watch.id}
               watch={watch}
               reorderMode={reorderMode}
-              onMove={moveWatch}
+              isDragging={draggingId === watch.id}
+              onDragStart={beginDraggingWatch}
               onAction={handleAction}
               notify={notify}
             />
@@ -630,13 +728,15 @@ function WatchFields({ input, onChange }: { input: WatchInput; onChange: (input:
 function WatchCard({
   watch,
   reorderMode,
-  onMove,
+  isDragging,
+  onDragStart,
   onAction,
   notify
 }: {
   watch: Watch;
   reorderMode: boolean;
-  onMove: (watchId: number, direction: -1 | 1) => void;
+  isDragging: boolean;
+  onDragStart: (watchId: number, event: ReactPointerEvent<HTMLButtonElement>) => void;
   onAction: (action: ActionResponse) => void;
   notify: (message: string, category?: Category) => void;
 }) {
@@ -666,15 +766,12 @@ function WatchCard({
   const faviconHost = domainFromUrl(watch.careers_url);
 
   return (
-    <article className="watch-fragment" id={`watch-${watch.id}`}>
+    <article className={cx("watch-fragment", isDragging && "dragging")} id={`watch-${watch.id}`} data-watch-fragment data-watch-id={watch.id}>
       <div className="watch-card">
         {reorderMode && (
-          <div className="watch-reorder">
-            <IconButton compact onClick={() => onMove(watch.id, -1)} aria-label="Move up">
-              <ChevronUp size={16} />
-            </IconButton>
-            <IconButton compact onClick={() => onMove(watch.id, 1)} aria-label="Move down">
-              <ChevronDown size={16} />
+          <div className="watch-drag">
+            <IconButton className="drag-handle" onPointerDown={(event) => onDragStart(watch.id, event)} aria-label={`Drag ${watch.company_name} alert to reorder`}>
+              <GripVertical size={18} />
             </IconButton>
           </div>
         )}
