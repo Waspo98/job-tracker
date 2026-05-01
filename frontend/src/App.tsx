@@ -838,6 +838,12 @@ function WatchCard({
   const [editing, setEditing] = useState(false);
   const [notifications, setNotifications] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const menuPresence = usePresence(menuOpen);
+
+  const closeMenu = () => setMenuOpen(false);
+  const toggleMenu = () => {
+    setMenuOpen((open) => (open || menuPresence.present ? false : true));
+  };
 
   const check = useMutation({
     mutationFn: () => api.checkWatch(watch.id),
@@ -916,14 +922,14 @@ function WatchCard({
         </div>
 
         <div className="watch-actions">
-          <IconButton onClick={() => setMenuOpen(!menuOpen)} aria-label={`Alert settings for ${watch.company_name}`}>
+          <IconButton onClick={toggleMenu} aria-label={`Alert settings for ${watch.company_name}`} aria-expanded={menuOpen} aria-haspopup="menu">
             <MoreVertical size={18} />
           </IconButton>
-          <DropdownMenu open={menuOpen} onClose={() => setMenuOpen(false)}>
+          <DropdownMenu open={menuOpen} present={menuPresence.present} closing={menuPresence.closing} onClose={closeMenu}>
             <MenuButton icon={<RefreshCcw size={16} />} label={check.isPending ? "Checking..." : "Check"} loading={check.isPending} onClick={() => check.mutate()} />
-            <MenuButton icon={<Bell size={16} />} label="Notifications" onClick={() => { setNotifications(true); setMenuOpen(false); }} />
-            <MenuButton icon={<Edit3 size={16} />} label="Edit" onClick={() => { setEditing(true); setMenuOpen(false); }} />
-            <MenuButton danger icon={<Trash2 size={16} />} label="Delete" onClick={() => { setConfirmDelete(true); setMenuOpen(false); }} />
+            <MenuButton icon={<Bell size={16} />} label="Notifications" onClick={() => { setNotifications(true); closeMenu(); }} />
+            <MenuButton icon={<Edit3 size={16} />} label="Edit" onClick={() => { setEditing(true); closeMenu(); }} />
+            <MenuButton danger icon={<Trash2 size={16} />} label="Delete" onClick={() => { setConfirmDelete(true); closeMenu(); }} />
           </DropdownMenu>
         </div>
       </div>
@@ -944,9 +950,20 @@ function WatchCard({
   );
 }
 
-function DropdownMenu({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
+function DropdownMenu({
+  open,
+  present,
+  closing,
+  onClose,
+  children
+}: {
+  open: boolean;
+  present: boolean;
+  closing: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}) {
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const { present, closing } = usePresence(open);
 
   useEffect(() => {
     if (!open) return;
