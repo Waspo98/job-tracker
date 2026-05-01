@@ -10,6 +10,7 @@ export interface Session {
   csrf_token: string;
   user: User | null;
   check_interval: number;
+  registration_enabled: boolean;
   authentik_enabled: boolean;
   authentik_login_url: string | null;
   authentik_login_button_text: string;
@@ -19,6 +20,34 @@ export interface Session {
 export interface LogoutResponse {
   ok: boolean;
   logout_url?: string | null;
+}
+
+export interface PushConfig {
+  enabled: boolean;
+  public_key: string | null;
+}
+
+export interface PushSubscriptionPayload {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+export interface PushSubscriptionResponse {
+  ok: boolean;
+  subscribed: boolean;
+}
+
+export type Appearance = "system" | "light" | "dark";
+export type JobStatus = "" | "interested" | "applied" | "ignored" | "saved";
+
+export interface UserSettings {
+  appearance: Appearance;
+  default_email_enabled: boolean;
+  default_push_enabled: boolean;
+  check_interval_hours: number;
 }
 
 export interface Job {
@@ -32,6 +61,8 @@ export interface Job {
   notified_at?: string | null;
   company_name?: string | null;
   keywords?: string | null;
+  status: JobStatus;
+  notes: string;
 }
 
 export interface Diagnostic {
@@ -59,6 +90,7 @@ export interface Stats {
   alerts: number;
   jobs: number;
   interval: number;
+  weekly_new_jobs: number;
 }
 
 export interface Dashboard {

@@ -67,27 +67,26 @@ def validate_public_http_url(url):
 
 def fetch_public_url(url, headers=None, timeout=15, max_redirects=5):
     current_url = url
-    session = build_session()
+    with build_session() as session:
+        for _ in range(max_redirects + 1):
+            safe_url, error = validate_public_http_url(current_url)
+            if error:
+                raise UnsafeUrlError(error)
 
-    for _ in range(max_redirects + 1):
-        safe_url, error = validate_public_http_url(current_url)
-        if error:
-            raise UnsafeUrlError(error)
+            response = session.get(
+                safe_url,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=False,
+            )
 
-        response = session.get(
-            safe_url,
-            headers=headers,
-            timeout=timeout,
-            allow_redirects=False,
-        )
+            if response.is_redirect or response.is_permanent_redirect:
+                location = response.headers.get('Location')
+                if not location:
+                    return response
+                current_url = urljoin(response.url, location)
+                continue
 
-        if response.is_redirect or response.is_permanent_redirect:
-            location = response.headers.get('Location')
-            if not location:
-                return response
-            current_url = urljoin(response.url, location)
-            continue
-
-        return response
+            return response
 
     raise UnsafeUrlError('Too many redirects while checking that careers page.')

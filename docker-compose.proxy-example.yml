@@ -1,0 +1,19 @@
+services:
+  job-tracker:
+    image: ${JOB_TRACKER_IMAGE:-ghcr.io/OWNER/REPOSITORY:latest}
+    restart: unless-stopped
+    expose:
+      - "5055"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    networks:
+      - proxy
+      - job-tracker
+
+networks:
+  proxy:
+    external: true
+  job-tracker:
+    driver: bridge

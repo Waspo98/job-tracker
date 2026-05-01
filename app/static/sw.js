@@ -1,11 +1,13 @@
-const CACHE_VERSION = 'job-tracker-v2';
+const CACHE_VERSION = 'job-tracker-v5';
 const APP_SHELL = [
   '/offline',
-  '/static/logo.png',
-  '/static/logo-192.png',
-  '/static/logo-512.png',
-  '/static/logo-maskable-512.png',
-  '/manifest.webmanifest'
+  '/static/logo.png?v=20260501-brand',
+  '/static/logo-192.png?v=20260501-brand',
+  '/static/logo-512.png?v=20260501-brand',
+  '/static/logo-maskable-512.png?v=20260501-brand',
+  '/static/apple-touch-icon.png?v=20260501-brand',
+  '/static/fonts/GoogleSans-Variable.ttf',
+  '/manifest.webmanifest?v=20260501-brand'
 ];
 
 self.addEventListener('install', (event) => {
@@ -70,8 +72,8 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'Job Tracker';
   const options = {
     body: payload.body || 'New job alert activity is available.',
-    icon: '/static/logo-192.png',
-    badge: '/static/logo-192.png',
+    icon: '/static/logo-192.png?v=20260501-brand',
+    badge: '/static/logo-192.png?v=20260501-brand',
     data: {
       url: payload.url || '/',
     },

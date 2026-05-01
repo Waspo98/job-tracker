@@ -1,4 +1,17 @@
-import type { ActionResponse, Dashboard, Job, LogoutResponse, PreviewResponse, Session, WatchInput } from "./types";
+import type {
+  ActionResponse,
+  Dashboard,
+  Job,
+  JobStatus,
+  LogoutResponse,
+  PreviewResponse,
+  PushConfig,
+  PushSubscriptionPayload,
+  PushSubscriptionResponse,
+  Session,
+  UserSettings,
+  WatchInput
+} from "./types";
 
 let csrfToken = "";
 
@@ -58,8 +71,39 @@ export const api = {
       body: JSON.stringify({ email, password })
     }),
   logout: () => apiFetch<LogoutResponse>("/api/auth/logout", { method: "POST" }),
+  pushConfig: () => apiFetch<PushConfig>("/api/push/config"),
+  savePushSubscription: (subscription: PushSubscriptionPayload) =>
+    apiFetch<PushSubscriptionResponse>("/api/push/subscriptions", {
+      method: "POST",
+      body: JSON.stringify(subscription)
+    }),
+  deletePushSubscription: (endpoint: string) =>
+    apiFetch<PushSubscriptionResponse>("/api/push/subscriptions", {
+      method: "DELETE",
+      body: JSON.stringify({ endpoint })
+    }),
+  settings: () => apiFetch<UserSettings>("/api/settings"),
+  updateSettings: (settings: UserSettings) =>
+    apiFetch<UserSettings>("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify(settings)
+    }),
+  testNotification: () =>
+    apiFetch<ActionResponse>("/api/settings/test-notification", { method: "POST" }),
+  exportData: () => apiFetch<Record<string, unknown>>("/api/data/export"),
+  restoreData: (data: Record<string, unknown>) =>
+    apiFetch<ActionResponse>("/api/data/restore", {
+      method: "POST",
+      body: JSON.stringify(data)
+    }),
   dashboard: () => apiFetch<Dashboard>("/api/dashboard"),
   jobs: () => apiFetch<Job[]>("/api/jobs"),
+  watchJobs: (watchId: number) => apiFetch<Job[]>(`/api/watches/${watchId}/jobs`),
+  updateJobMeta: (jobId: number, status: JobStatus, notes: string) =>
+    apiFetch<Job>(`/api/jobs/${jobId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, notes })
+    }),
   preview: (input: WatchInput) =>
     apiFetch<PreviewResponse>("/api/preview", {
       method: "POST",

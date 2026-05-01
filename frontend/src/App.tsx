@@ -6,19 +6,28 @@ import {
   BriefcaseBusiness,
   Check,
   ChevronsUpDown,
+  Download,
   Edit3,
   ExternalLink,
   Eye,
+  FileText,
   GripVertical,
+  Heart,
+  Info,
+  Monitor,
   MoreVertical,
+  Moon,
   Plus,
   RefreshCcw,
+  Settings as SettingsIcon,
   ShieldCheck,
+  Sun,
   Trash2,
+  Upload,
   X
 } from "lucide-react";
 import { api, ApiError, setCsrfToken } from "./api";
-import type { ActionResponse, Category, Dashboard, Job, PreviewResponse, Session, Stats, Watch, WatchInput } from "./types";
+import type { ActionResponse, Appearance, Category, Dashboard, Job, JobStatus, PreviewResponse, PushConfig, PushSubscriptionPayload, Session, Stats, UserSettings, Watch, WatchInput } from "./types";
 
 type Toast = {
   id: number;
@@ -39,8 +48,34 @@ type DragFrame = {
 
 type ButtonVariant = "primary" | "ghost" | "danger";
 type ButtonSize = "default" | "sm";
+type SegmentedOption<T extends string> = {
+  value: T;
+  label: string;
+  icon?: ReactNode;
+};
+type ActionHandler = (action: ActionResponse, showToast?: boolean) => void;
+type SettingsSaveRequest = {
+  settings: UserSettings;
+  requestId: number;
+  requirePushSubscription?: boolean;
+};
 
 const UI_EXIT_MS = 180;
+const APP_ICON_SRC = "/static/logo.png?v=20260501-brand";
+const APP_BUILD = "v0.1";
+const APP_DEVELOPER = "Neal Overbay";
+const PRODUCT_TAGLINE = "self-hosted job alerts";
+const appearanceOptions: Array<SegmentedOption<Appearance>> = [
+  { value: "system", label: "System", icon: <Monitor size={16} /> },
+  { value: "light", label: "Light", icon: <Sun size={16} /> },
+  { value: "dark", label: "Dark", icon: <Moon size={16} /> }
+];
+const jobStatusOptions: Array<SegmentedOption<JobStatus>> = [
+  { value: "", label: "None" },
+  { value: "ignored", label: "Ignore" },
+  { value: "interested", label: "Interested" },
+  { value: "applied", label: "Applied" }
+];
 
 const emptyWatchInput: WatchInput = {
   company_name: "",
@@ -54,11 +89,12 @@ function messageFromError(error: unknown) {
   return "Something went wrong.";
 }
 
-function deriveStats(watches: Watch[], interval: number): Stats {
+function deriveStats(watches: Watch[], interval: number, weeklyNewJobs = 0): Stats {
   return {
     alerts: watches.length,
     jobs: watches.reduce((sum, watch) => sum + watch.job_count, 0),
-    interval
+    interval,
+    weekly_new_jobs: weeklyNewJobs
   };
 }
 
@@ -73,14 +109,14 @@ function applyActionToDashboard(current: Dashboard | undefined, action: ActionRe
   if (action.watches) {
     return {
       watches: action.watches,
-      stats: action.stats || deriveStats(action.watches, current.stats.interval)
+      stats: action.stats || deriveStats(action.watches, current.stats.interval, current.stats.weekly_new_jobs)
     };
   }
   if (action.watch) {
     const watches = updateWatchList(current.watches, action.watch);
     return {
       watches,
-      stats: action.stats || deriveStats(watches, current.stats.interval)
+      stats: action.stats || deriveStats(watches, current.stats.interval, current.stats.weekly_new_jobs)
     };
   }
   if (action.stats) {
@@ -94,12 +130,112 @@ function formatDate(value: string | null) {
   return value.replace("T", " ").slice(0, 16);
 }
 
-function domainFromUrl(value: string) {
-  try {
-    return new URL(value).hostname;
-  } catch {
-    return "";
+function editableJobStatus(status: JobStatus | null | undefined): JobStatus {
+  return status === "saved" ? "" : status || "";
+}
+
+function formatJobStatus(status: JobStatus | null | undefined) {
+  if (!status || status === "saved") return "";
+  if (status === "ignored") return "Ignore";
+  return capitalizeLabel(status);
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = `${value}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const output = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i += 1) {
+    output[i] = rawData.charCodeAt(i);
   }
+  return output;
+}
+
+function subscriptionToPayload(subscription: PushSubscription): PushSubscriptionPayload {
+  const payload = subscription.toJSON();
+  if (!payload.endpoint || !payload.keys?.p256dh || !payload.keys?.auth) {
+    throw new Error("Could not read this browser's push subscription.");
+  }
+  return {
+    endpoint: payload.endpoint,
+    keys: {
+      p256dh: payload.keys.p256dh,
+      auth: payload.keys.auth
+    }
+  };
+}
+
+function pushSupportMessage() {
+  if (!("serviceWorker" in navigator)) return "This browser does not support service workers.";
+  if (!("PushManager" in window)) return "This browser does not support push notifications.";
+  if (!("Notification" in window)) return "This browser does not support notifications.";
+  return "";
+}
+
+function resolvedSystemAppearance(): Exclude<Appearance, "system"> {
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function capitalizeLabel(value: string) {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function formatAppearance(value: Appearance | Exclude<Appearance, "system">) {
+  return capitalizeLabel(value);
+}
+
+function normalizeCheckInterval(hours: number | string) {
+  return Math.min(168, Math.max(1, Math.trunc(Number(hours) || 1)));
+}
+
+function useResolvedAppearance(appearance: Appearance) {
+  const [resolved, setResolved] = useState<Exclude<Appearance, "system">>(() =>
+    appearance === "system" ? resolvedSystemAppearance() : appearance
+  );
+
+  useEffect(() => {
+    if (appearance !== "system") {
+      setResolved(appearance);
+      return;
+    }
+
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const update = () => setResolved(media.matches ? "light" : "dark");
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [appearance]);
+
+  return resolved;
+}
+
+async function ensurePushSubscription(config?: PushConfig) {
+  const unsupported = pushSupportMessage();
+  if (unsupported) throw new Error(unsupported);
+
+  const resolvedConfig = config || await api.pushConfig();
+  if (!resolvedConfig.enabled || !resolvedConfig.public_key) {
+    throw new Error("Browser push is not configured on the server yet.");
+  }
+  if (Notification.permission === "denied") {
+    throw new Error("Browser notifications are blocked for this site.");
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+
+  if (!subscription) {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      throw new Error("Notification permission was not granted.");
+    }
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(resolvedConfig.public_key)
+    });
+  }
+
+  await api.savePushSubscription(subscriptionToPayload(subscription));
 }
 
 function useRoute() {
@@ -242,29 +378,107 @@ function IconButton({ compact, children, className, type = "button", ...props }:
   );
 }
 
+function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: T;
+  options: Array<SegmentedOption<T>>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="segmented-control" role="radiogroup" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          className={cx("segment-option", value === option.value && "active")}
+          type="button"
+          role="radio"
+          aria-checked={value === option.value}
+          onClick={() => onChange(option.value)}
+        >
+          {option.icon}
+          <span>{option.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ToggleOption({
+  title,
+  detail,
+  checked,
+  disabled,
+  muted,
+  onChange
+}: {
+  title: string;
+  detail: string;
+  checked: boolean;
+  disabled?: boolean;
+  muted?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={cx("notification-option", muted && "disabled")}>
+      <span>
+        <span className="notification-title">{title}</span>
+        <span className="notification-copy">{detail}</span>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </label>
+  );
+}
+
 export default function App() {
   const queryClient = useQueryClient();
   const { path, navigate } = useRoute();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
+  const toastTimersRef = useRef<{ hide: number | null; remove: number | null }>({
+    hide: null,
+    remove: null
+  });
+
+  const clearToastTimers = () => {
+    if (toastTimersRef.current.hide) window.clearTimeout(toastTimersRef.current.hide);
+    if (toastTimersRef.current.remove) window.clearTimeout(toastTimersRef.current.remove);
+    toastTimersRef.current.hide = null;
+    toastTimersRef.current.remove = null;
+  };
 
   const notify = (message: string, category: Category = "info") => {
     const id = Date.now() + Math.random();
-    setToasts((items) => [{ id, message, category }, ...items]);
-    window.setTimeout(() => {
+    clearToastTimers();
+    setToasts([{ id, message, category }]);
+    toastTimersRef.current.hide = window.setTimeout(() => {
       setToasts((items) => items.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast)));
-      window.setTimeout(() => {
+      toastTimersRef.current.remove = window.setTimeout(() => {
         setToasts((items) => items.filter((toast) => toast.id !== id));
+        toastTimersRef.current.remove = null;
       }, UI_EXIT_MS);
     }, 5000);
   };
 
   const closeToast = (id: number) => {
+    clearToastTimers();
     setToasts((items) => items.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast)));
-    window.setTimeout(() => {
+    toastTimersRef.current.remove = window.setTimeout(() => {
       setToasts((items) => items.filter((toast) => toast.id !== id));
+      toastTimersRef.current.remove = null;
     }, UI_EXIT_MS);
   };
+
+  useEffect(() => () => clearToastTimers(), []);
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
@@ -275,6 +489,7 @@ export default function App() {
     onSuccess: ({ logout, session: fresh }) => {
       queryClient.removeQueries({ queryKey: ["dashboard"] });
       queryClient.removeQueries({ queryKey: ["jobs"] });
+      queryClient.removeQueries({ queryKey: ["settings"] });
       setConfirmLogoutOpen(false);
       if (logout.logout_url) {
         window.location.assign(logout.logout_url);
@@ -286,7 +501,7 @@ export default function App() {
       }
       navigate("/");
     },
-    onError: (error) => notify(messageFromError(error), "error")
+    onError: () => undefined
   });
 
   const sessionQuery = useQuery({
@@ -295,9 +510,21 @@ export default function App() {
     staleTime: 5 * 60 * 1000
   });
 
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: api.settings,
+    enabled: Boolean(sessionQuery.data?.authenticated),
+    staleTime: 5 * 60 * 1000
+  });
+
   useEffect(() => {
     if (sessionQuery.data?.csrf_token) setCsrfToken(sessionQuery.data.csrf_token);
   }, [sessionQuery.data?.csrf_token]);
+
+  useEffect(() => {
+    const appearance = sessionQuery.data?.authenticated ? settingsQuery.data?.appearance || "system" : "system";
+    document.documentElement.dataset.theme = appearance;
+  }, [sessionQuery.data?.authenticated, settingsQuery.data?.appearance]);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
@@ -337,11 +564,13 @@ export default function App() {
       <main className="container">
         {path.startsWith("/jobs") ? (
           <JobsPage notify={notify} />
+        ) : path.startsWith("/settings") ? (
+          <SettingsPage notify={notify} />
         ) : (
-          <DashboardPage notify={notify} interval={session.check_interval} />
+          <DashboardPage notify={notify} />
         )}
       </main>
-      <footer>job-tracker / jobs.overbay.app / checks every {session.check_interval}h</footer>
+      <footer>job-tracker / {PRODUCT_TAGLINE} / build {APP_BUILD}</footer>
       <ConfirmModal
         open={confirmLogoutOpen}
         title="Log out?"
@@ -359,7 +588,7 @@ export default function App() {
 function Splash() {
   return (
     <div className="splash">
-      <img src="/static/logo.png" alt="" />
+      <img src={APP_ICON_SRC} alt="" />
       <div>Loading Job Tracker</div>
     </div>
   );
@@ -411,11 +640,11 @@ function TopNav({
       <div className="nav-inner">
         <button className="nav-logo" type="button" onClick={() => navigate("/")}>
           <span className="nav-logo-mark">
-            <img src="/static/logo.png" alt="" />
+            <img src={APP_ICON_SRC} alt="" />
           </span>
           <span>
             <span className="nav-logo-text">Job Tracker</span>
-            <span className="nav-logo-sub">jobs.overbay.app</span>
+            <span className="nav-logo-sub">{PRODUCT_TAGLINE}</span>
           </span>
         </button>
 
@@ -423,6 +652,7 @@ function TopNav({
           <span className="nav-user">{session.user?.email}</span>
           {navLink("Dashboard", "/")}
           {navLink("Jobs", "/jobs")}
+          {navLink("Settings", "/settings")}
           {installPrompt && (
             <button className="nav-link" type="button" onClick={() => installPrompt.prompt()}>
               Install
@@ -444,6 +674,7 @@ function TopNav({
         <div className="nav-mobile-email">{session.user?.email}</div>
         {navLink("Dashboard", "/", true)}
         {navLink("Jobs", "/jobs", true)}
+        {navLink("Settings", "/settings", true)}
         {installPrompt && (
           <button className="nav-mobile-link" type="button" onClick={() => installPrompt.prompt()}>
             Install app
@@ -464,6 +695,7 @@ function AuthView({ notify, session }: { notify: (message: string, category?: Ca
   const [password, setPassword] = useState("");
   const [ssoPending, setSsoPending] = useState(false);
   const passwordLoginEnabled = session?.password_login_enabled ?? true;
+  const registrationEnabled = session?.registration_enabled ?? true;
   const authentikEnabled = Boolean(session?.authentik_enabled && session.authentik_login_url);
   const authentikButtonText = session?.authentik_login_button_text || "Log in with Authentik";
   const authentikLoginUrl = session?.authentik_login_url
@@ -478,7 +710,7 @@ function AuthView({ notify, session }: { notify: (message: string, category?: Ca
       setCsrfToken(session.csrf_token);
       queryClient.setQueryData(["session"], session);
     },
-    onError: (error) => notify(messageFromError(error), "error")
+    onError: () => undefined
   });
 
   useEffect(() => {
@@ -486,7 +718,6 @@ function AuthView({ notify, session }: { notify: (message: string, category?: Ca
     const authError = params.get("auth_error");
     if (!authError) return;
 
-    notify(authError, "error");
     params.delete("auth_error");
     const nextSearch = params.toString();
     window.history.replaceState(
@@ -498,11 +729,22 @@ function AuthView({ notify, session }: { notify: (message: string, category?: Ca
 
   useEffect(() => {
     if (!passwordLoginEnabled && mode !== "login") setMode("login");
-  }, [mode, passwordLoginEnabled]);
+    if (!registrationEnabled && mode === "register") setMode("login");
+  }, [mode, passwordLoginEnabled, registrationEnabled]);
+
+  useEffect(() => {
+    document.documentElement.classList.add("auth-static");
+    document.body.classList.add("auth-static");
+    return () => {
+      document.documentElement.classList.remove("auth-static");
+      document.body.classList.remove("auth-static");
+    };
+  }, []);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!passwordLoginEnabled) return;
+    if (mode === "register" && !registrationEnabled) return;
     mutation.mutate();
   };
 
@@ -511,11 +753,11 @@ function AuthView({ notify, session }: { notify: (message: string, category?: Ca
       <section className="auth-card">
         <div className="auth-logo">
           <span className="auth-logo-mark">
-            <img src="/static/logo.png" alt="" />
+            <img src={APP_ICON_SRC} alt="" />
           </span>
           <span>
             <span className="auth-title">Job Tracker</span>
-            <span className="auth-sub">Watch careers pages without babysitting tabs.</span>
+            <span className="auth-sub">Taking the "job" out of "job search"</span>
           </span>
         </div>
 
@@ -524,20 +766,37 @@ function AuthView({ notify, session }: { notify: (message: string, category?: Ca
             <form onSubmit={submit}>
               <div className="field stacked">
                 <label>Email</label>
-                <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+                <input
+                  type="email"
+                  name="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                />
               </div>
               <div className="field stacked">
                 <label>Password</label>
-                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={mode === "register" ? 8 : undefined} />
+                <input
+                  type="password"
+                  name="password"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  minLength={mode === "register" ? 8 : undefined}
+                />
               </div>
               <Button fullWidth type="submit" loading={mutation.isPending}>
                 {mode === "login" ? "Log In" : "Create Account"}
               </Button>
             </form>
 
-            <button className="auth-switch" type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
-              {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
-            </button>
+            {(registrationEnabled || mode === "register") && (
+              <button className="auth-switch" type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+                {mode === "login" ? "Need an account? Create one" : "Already have an account? Log in"}
+              </button>
+            )}
           </>
         )}
 
@@ -570,7 +829,7 @@ function AuthView({ notify, session }: { notify: (message: string, category?: Ca
   );
 }
 
-function DashboardPage({ notify, interval }: { notify: (message: string, category?: Category) => void; interval: number }) {
+function DashboardPage({ notify }: { notify: (message: string, category?: Category) => void }) {
   const queryClient = useQueryClient();
   const [reorderMode, setReorderMode] = useState(false);
   const [draggingId, setDraggingId] = useState<number | null>(null);
@@ -585,15 +844,15 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
     queryFn: api.dashboard
   });
 
-  const handleAction = (action: ActionResponse) => {
+  const handleAction: ActionHandler = (action, showToast = false) => {
     queryClient.setQueryData<Dashboard>(["dashboard"], (current) => applyActionToDashboard(current, action));
-    if (action.message) notify(action.message, action.category);
+    if (showToast && action.message) notify(action.message, action.category);
   };
 
   const checkAll = useMutation({
     mutationFn: api.checkAll,
-    onSuccess: handleAction,
-    onError: (error) => notify(messageFromError(error), "error")
+    onSuccess: (action) => handleAction(action, true),
+    onError: () => undefined
   });
 
   const reorder = useMutation({
@@ -609,7 +868,6 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
       }
       dragOriginalIdsRef.current = [];
       dragOriginalDashboardRef.current = null;
-      notify(messageFromError(error), "error");
     }
   });
 
@@ -619,7 +877,7 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
       return {
         ...current,
         watches,
-        stats: deriveStats(watches, current.stats.interval)
+        stats: deriveStats(watches, current.stats.interval, current.stats.weekly_new_jobs)
       };
     });
   };
@@ -744,7 +1002,7 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
       <header className="page-header">
         <div className="page-label">// dashboard</div>
         <h1 className="page-title">Your Job Alerts</h1>
-        <p className="page-sub">Alerts check every {interval} hours. New matches are emailed to your account address.</p>
+        <p className="page-sub">Alerts check every {dashboard.stats.interval} hours. New matches are emailed to your account address.</p>
       </header>
 
       <StatsRow stats={dashboard.stats} />
@@ -806,22 +1064,18 @@ function StatsRow({ stats }: { stats: Stats }) {
         <div className="stat-value">{stats.jobs}</div>
         <div className="stat-label">Current Listings</div>
       </div>
-      <div className="stat">
-        <div className="stat-value">{stats.interval}h</div>
-        <div className="stat-label">Check Interval</div>
-      </div>
     </div>
   );
 }
 
-function CreateAlert({ notify, onAction }: { notify: (message: string, category?: Category) => void; onAction: (action: ActionResponse) => void }) {
+function CreateAlert({ notify, onAction }: { notify: (message: string, category?: Category) => void; onAction: ActionHandler }) {
   const [input, setInput] = useState<WatchInput>(emptyWatchInput);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
 
   const create = useMutation({
     mutationFn: api.createWatch,
     onSuccess: (action) => {
-      onAction(action);
+      onAction(action, true);
       setInput(emptyWatchInput);
       setPreview(null);
     },
@@ -831,7 +1085,7 @@ function CreateAlert({ notify, onAction }: { notify: (message: string, category?
   const previewMutation = useMutation({
     mutationFn: api.preview,
     onSuccess: setPreview,
-    onError: (error) => notify(messageFromError(error), "error")
+    onError: () => undefined
   });
 
   const submit = (event: FormEvent) => {
@@ -876,8 +1130,8 @@ function WatchFields({ input, onChange }: { input: WatchInput; onChange: (input:
       </div>
       <div className="field form-full">
         <label>Keywords <span>(optional)</span></label>
-        <input value={input.keywords} onChange={(event) => onChange({ ...input, keywords: event.target.value })} placeholder="engineer, mechanical, product designer" />
-        <div className="field-hint">Comma-separated. Matches any keyword in the job title. Leave blank to see all open roles.</div>
+        <input value={input.keywords} onChange={(event) => onChange({ ...input, keywords: event.target.value })} placeholder="engineer, mechanical, -intern" />
+        <div className="field-hint">Comma-separated. Use -keyword to exclude titles. Leave blank to see all open roles.</div>
       </div>
     </div>
   );
@@ -897,12 +1151,13 @@ function WatchCard({
   isDragging: boolean;
   dragStyle?: CSSProperties;
   onDragStart: (watchId: number, event: ReactPointerEvent<HTMLButtonElement>) => void;
-  onAction: (action: ActionResponse) => void;
+  onAction: ActionHandler;
   notify: (message: string, category?: Category) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [notifications, setNotifications] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const menuPresence = usePresence(menuOpen);
 
@@ -915,7 +1170,7 @@ function WatchCard({
     mutationFn: () => api.checkWatch(watch.id),
     onSuccess: (action) => {
       setMenuOpen(false);
-      onAction(action);
+      onAction(action, true);
     },
     onError: (error) => notify(messageFromError(error), "error")
   });
@@ -926,10 +1181,10 @@ function WatchCard({
       setConfirmDelete(false);
       onAction(action);
     },
-    onError: (error) => notify(messageFromError(error), "error")
+    onError: () => undefined
   });
 
-  const faviconHost = domainFromUrl(watch.careers_url);
+  const iconLabel = watch.company_name.slice(0, 1).toUpperCase() || "J";
 
   return (
     <article className={cx("watch-fragment", isDragging && "dragging")} id={`watch-${watch.id}`} data-watch-fragment data-watch-id={watch.id} style={dragStyle}>
@@ -942,12 +1197,8 @@ function WatchCard({
           </div>
         )}
 
-        <div className="watch-icon">
-          {faviconHost ? (
-            <img src={`https://www.google.com/s2/favicons?domain=${faviconHost}&sz=32`} alt="" />
-          ) : (
-            watch.company_name.slice(0, 1).toUpperCase()
-          )}
+        <div className="watch-icon" aria-hidden="true">
+          {iconLabel}
         </div>
 
         <div className="watch-summary">
@@ -988,12 +1239,19 @@ function WatchCard({
         </div>
 
         <div className="watch-actions">
-          <IconButton onClick={toggleMenu} aria-label={`Alert settings for ${watch.company_name}`} aria-expanded={menuOpen} aria-haspopup="menu">
+          <IconButton
+            className={cx("menu-trigger", menuOpen && "open")}
+            onClick={toggleMenu}
+            aria-label={`Alert settings for ${watch.company_name}`}
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+          >
             <MoreVertical size={18} />
           </IconButton>
           <DropdownMenu open={menuOpen} present={menuPresence.present} closing={menuPresence.closing} onClose={closeMenu}>
             <MenuButton icon={<RefreshCcw size={16} />} label={check.isPending ? "Checking..." : "Check"} loading={check.isPending} onClick={() => check.mutate()} />
             <MenuButton icon={<Bell size={16} />} label="Notifications" onClick={() => { setNotifications(true); closeMenu(); }} />
+            <MenuButton icon={<FileText size={16} />} label="Notes" onClick={() => { setNotesOpen(true); closeMenu(); }} />
             <MenuButton icon={<Edit3 size={16} />} label="Edit" onClick={() => { setEditing(true); closeMenu(); }} />
             <MenuButton danger icon={<Trash2 size={16} />} label="Delete" onClick={() => { setConfirmDelete(true); closeMenu(); }} />
           </DropdownMenu>
@@ -1002,6 +1260,7 @@ function WatchCard({
 
       <EditWatchModal watch={watch} open={editing} onClose={() => setEditing(false)} onAction={onAction} notify={notify} />
       <NotificationsModal watch={watch} open={notifications} onClose={() => setNotifications(false)} onAction={onAction} notify={notify} />
+      <JobNotesModal watch={watch} open={notesOpen} onClose={() => setNotesOpen(false)} notify={notify} />
       <ConfirmModal
         open={confirmDelete}
         title={`Delete ${watch.company_name}?`}
@@ -1084,13 +1343,16 @@ function MenuButton({
 }
 
 function JobRow({ job }: { job: Job }) {
+  const statusLabel = formatJobStatus(job.status);
+
   return (
-    <div className="job-row">
+    <div className={cx("job-row", job.status === "ignored" && "job-row-muted")}>
       <div className="job-dot" />
       <div className="job-title">
         {job.title}
         {job.location ? <span className="job-location-inline"> - {job.location}</span> : null}
       </div>
+      {statusLabel && <span className={cx("job-status-chip", `status-${job.status}`)}>{statusLabel}</span>}
       {job.url && (
         <a className="job-link" href={job.url} target="_blank" rel="noreferrer">
           Apply <ExternalLink size={13} />
@@ -1110,7 +1372,7 @@ function EditWatchModal({
   watch: Watch;
   open: boolean;
   onClose: () => void;
-  onAction: (action: ActionResponse) => void;
+  onAction: ActionHandler;
   notify: (message: string, category?: Category) => void;
 }) {
   const [input, setInput] = useState<WatchInput>(() => ({
@@ -1129,7 +1391,7 @@ function EditWatchModal({
   const update = useMutation({
     mutationFn: () => api.updateWatch(watch.id, input),
     onSuccess: (action) => {
-      onAction(action);
+      onAction(action, true);
       onClose();
     },
     onError: (error) => notify(messageFromError(error), "error")
@@ -1138,7 +1400,7 @@ function EditWatchModal({
   const previewMutation = useMutation({
     mutationFn: () => api.preview(input),
     onSuccess: setPreview,
-    onError: (error) => notify(messageFromError(error), "error")
+    onError: () => undefined
   });
 
   return (
@@ -1171,49 +1433,538 @@ function NotificationsModal({
   watch: Watch;
   open: boolean;
   onClose: () => void;
-  onAction: (action: ActionResponse) => void;
+  onAction: ActionHandler;
   notify: (message: string, category?: Category) => void;
 }) {
   const [emailEnabled, setEmailEnabled] = useState(watch.email_enabled);
+  const [pushEnabled, setPushEnabled] = useState(watch.push_enabled);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (open) setEmailEnabled(watch.email_enabled);
-  }, [open, watch.email_enabled]);
+    if (open) {
+      setEmailEnabled(watch.email_enabled);
+      setPushEnabled(watch.push_enabled);
+      setSaved(false);
+    }
+  }, [open, watch.email_enabled, watch.push_enabled]);
+
+  const pushConfigQuery = useQuery({
+    queryKey: ["push-config"],
+    queryFn: api.pushConfig,
+    enabled: open,
+    staleTime: 5 * 60 * 1000
+  });
 
   const mutation = useMutation({
-    mutationFn: () => api.updateNotifications(watch.id, emailEnabled, watch.push_enabled),
+    mutationFn: async () => {
+      if (pushEnabled) {
+        const config = pushConfigQuery.data || await api.pushConfig();
+        await ensurePushSubscription(config);
+      }
+      return api.updateNotifications(watch.id, emailEnabled, pushEnabled);
+    },
     onSuccess: (action) => {
       onAction(action);
-      onClose();
+      setSaved(true);
+      window.setTimeout(onClose, 650);
     },
-    onError: (error) => notify(messageFromError(error), "error")
+    onError: () => setSaved(false)
   });
+
+  const pushUnsupported = pushSupportMessage();
+  const pushConfig = pushConfigQuery.data;
+  const pushUnavailable = Boolean(pushUnsupported || pushConfigQuery.isError || (pushConfig && !pushConfig.enabled));
+  const pushCopy = pushUnsupported ||
+    (pushConfigQuery.isError
+      ? "Could not check browser push configuration."
+      : pushConfig?.enabled
+        ? "Send browser notifications to this device for new matches."
+        : "Push delivery needs VAPID keys in the server environment.");
 
   return (
     <Modal open={open} onClose={onClose} title="Notifications" subTitle={watch.company_name}>
       <div className="notification-options">
-        <label className="notification-option">
-          <span>
-            <span className="notification-title">Email alerts</span>
-            <span className="notification-copy">Send new matches to your account email.</span>
-          </span>
-          <input type="checkbox" checked={emailEnabled} onChange={(event) => setEmailEnabled(event.target.checked)} />
-        </label>
-        <label className="notification-option disabled">
-          <span>
-            <span className="notification-title">Browser push</span>
-            <span className="notification-copy">Push delivery will use this device after subscription setup is added.</span>
-          </span>
-          <input type="checkbox" checked={watch.push_enabled} disabled readOnly />
-        </label>
+        <ToggleOption
+          title="Email alerts"
+          detail="Send new matches to your account email."
+          checked={emailEnabled}
+          disabled={mutation.isPending}
+          onChange={(checked) => {
+            setSaved(false);
+            setEmailEnabled(checked);
+          }}
+        />
+        <ToggleOption
+          title="Browser push"
+          detail={pushConfigQuery.isLoading ? "Checking browser push support..." : pushCopy}
+          checked={pushEnabled}
+          disabled={pushConfigQuery.isLoading || pushUnavailable || mutation.isPending}
+          muted={pushUnavailable}
+          onChange={(checked) => {
+            setSaved(false);
+            setPushEnabled(checked);
+          }}
+        />
       </div>
       <div className="modal-actions">
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button loading={mutation.isPending} icon={<Check size={16} />} onClick={() => mutation.mutate()}>
-          Save Notifications
+          {saved ? "Saved" : "Save Notifications"}
         </Button>
       </div>
     </Modal>
+  );
+}
+
+function JobNotesModal({
+  watch,
+  open,
+  onClose,
+  notify
+}: {
+  watch: Watch;
+  open: boolean;
+  onClose: () => void;
+  notify: (message: string, category?: Category) => void;
+}) {
+  const jobsQuery = useQuery({
+    queryKey: ["watch-jobs", watch.id],
+    queryFn: () => api.watchJobs(watch.id),
+    enabled: open
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title="Notes" subTitle={watch.company_name}>
+      {jobsQuery.isLoading ? (
+        <PanelLoading label="Loading jobs" />
+      ) : jobsQuery.isError ? (
+        <EmptyState title="Could not load jobs" detail={messageFromError(jobsQuery.error)} />
+      ) : jobsQuery.data && jobsQuery.data.length > 0 ? (
+        <div className="job-notes-list">
+          {jobsQuery.data.map((job) => (
+            <JobNoteEditor key={job.id || job.job_id} job={job} notify={notify} />
+          ))}
+        </div>
+      ) : (
+        <EmptyState title="No active jobs" detail="Run a check to discover jobs before adding notes." />
+      )}
+    </Modal>
+  );
+}
+
+function JobNoteEditor({ job, notify }: { job: Job; notify: (message: string, category?: Category) => void }) {
+  const queryClient = useQueryClient();
+  const [status, setStatus] = useState<JobStatus>(editableJobStatus(job.status));
+  const [notes, setNotes] = useState(job.notes || "");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setStatus(editableJobStatus(job.status));
+    setNotes(job.notes || "");
+    setSaved(false);
+  }, [job.id, job.status, job.notes]);
+
+  const save = useMutation({
+    mutationFn: () => {
+      if (!job.id) throw new Error("This job cannot be updated yet.");
+      return api.updateJobMeta(job.id, status, notes);
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Job[]>(["watch-jobs", updated.watch_id || job.watch_id], (current) =>
+        current?.map((item) => (item.id === updated.id ? updated : item)) || current
+      );
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1600);
+    },
+    onError: () => setSaved(false)
+  });
+
+  return (
+    <div className="job-note-card">
+      <div className="job-note-header">
+        <div>
+          <div className="job-note-title">{job.title}</div>
+          <div className="job-table-meta">{job.location || "Location not listed"}</div>
+        </div>
+        {job.url && (
+          <ButtonLink size="sm" href={job.url} target="_blank" rel="noreferrer" icon={<ExternalLink size={14} />}>
+            Apply
+          </ButtonLink>
+        )}
+      </div>
+      <SegmentedControl
+        label={`Status for ${job.title}`}
+        value={status}
+        options={jobStatusOptions}
+        onChange={(value) => {
+          setSaved(false);
+          setStatus(value);
+        }}
+      />
+      <textarea
+        className="notes-input"
+        value={notes}
+        maxLength={4000}
+        onChange={(event) => {
+          setSaved(false);
+          setNotes(event.target.value);
+        }}
+        placeholder="Notes, contacts, next steps..."
+      />
+      <div className="modal-actions compact-actions">
+        <Button size="sm" loading={save.isPending} icon={<Check size={15} />} onClick={() => save.mutate()}>
+          {saved ? "Saved" : "Save Notes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SettingsPage({ notify }: { notify: (message: string, category?: Category) => void }) {
+  const queryClient = useQueryClient();
+  const restoreInputRef = useRef<HTMLInputElement | null>(null);
+  const saveRequestIdRef = useRef(0);
+  const [appearance, setAppearance] = useState<Appearance>("system");
+  const [defaultEmailEnabled, setDefaultEmailEnabled] = useState(true);
+  const [defaultPushEnabled, setDefaultPushEnabled] = useState(false);
+  const [checkIntervalHours, setCheckIntervalHours] = useState("4");
+  const [restorePayload, setRestorePayload] = useState<Record<string, unknown> | null>(null);
+  const [autosaveMessage, setAutosaveMessage] = useState("Changes save automatically.");
+  const resolvedAppearance = useResolvedAppearance(appearance);
+
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: api.settings
+  });
+
+  const pushConfigQuery = useQuery({
+    queryKey: ["push-config"],
+    queryFn: api.pushConfig,
+    staleTime: 5 * 60 * 1000
+  });
+
+  const applySettingsLocally = (settings: UserSettings) => {
+    setAppearance(settings.appearance);
+    setDefaultEmailEnabled(settings.default_email_enabled);
+    setDefaultPushEnabled(settings.default_push_enabled);
+    setCheckIntervalHours(String(settings.check_interval_hours));
+    document.documentElement.dataset.theme = settings.appearance;
+  };
+
+  const applySettingsToCaches = (settings: UserSettings) => {
+    queryClient.setQueryData(["settings"], settings);
+    queryClient.setQueryData<Session>(["session"], (current) =>
+      current ? { ...current, check_interval: settings.check_interval_hours } : current
+    );
+    queryClient.setQueryData<Dashboard>(["dashboard"], (current) =>
+      current ? { ...current, stats: { ...current.stats, interval: settings.check_interval_hours } } : current
+    );
+  };
+
+  const currentSettings = (patch: Partial<UserSettings> = {}): UserSettings => {
+    const next = {
+      appearance,
+      default_email_enabled: defaultEmailEnabled,
+      default_push_enabled: defaultPushEnabled,
+      check_interval_hours: normalizeCheckInterval(checkIntervalHours || 4),
+      ...patch
+    };
+    return {
+      ...next,
+      check_interval_hours: normalizeCheckInterval(next.check_interval_hours)
+    };
+  };
+
+  const save = useMutation({
+    mutationFn: async ({ settings, requirePushSubscription }: SettingsSaveRequest) => {
+      if (settings.default_push_enabled && requirePushSubscription) {
+        const config = pushConfigQuery.data || await api.pushConfig();
+        await ensurePushSubscription(config);
+      }
+      return api.updateSettings(settings);
+    },
+    onMutate: async ({ settings }) => {
+      await queryClient.cancelQueries({ queryKey: ["settings"] });
+      const previousSettings = queryClient.getQueryData<UserSettings>(["settings"]);
+      applySettingsLocally(settings);
+      applySettingsToCaches(settings);
+      setAutosaveMessage("Saving changes...");
+      return { previousSettings };
+    },
+    onSuccess: (settings, request) => {
+      if (request.requestId !== saveRequestIdRef.current) return;
+      applySettingsLocally(settings);
+      applySettingsToCaches(settings);
+      setAutosaveMessage("Saved.");
+      window.setTimeout(() => {
+        setAutosaveMessage((current) => current === "Saved." ? "Changes save automatically." : current);
+      }, 1800);
+    },
+    onError: (error, request, context) => {
+      if (request.requestId === saveRequestIdRef.current && context?.previousSettings) {
+        applySettingsLocally(context.previousSettings);
+        applySettingsToCaches(context.previousSettings);
+      }
+      setAutosaveMessage(messageFromError(error));
+    }
+  });
+
+  useEffect(() => {
+    if (!settingsQuery.data || save.isPending) return;
+    applySettingsLocally(settingsQuery.data);
+  }, [settingsQuery.data, save.isPending]);
+
+  const testNotification = useMutation({
+    mutationFn: async () => {
+      const config = pushConfigQuery.data || await api.pushConfig();
+      await ensurePushSubscription(config);
+      return api.testNotification();
+    },
+    onSuccess: () => setAutosaveMessage("Test notification sent."),
+    onError: (error) => setAutosaveMessage(messageFromError(error))
+  });
+
+  const exportData = useMutation({
+    mutationFn: api.exportData,
+    onSuccess: (data) => {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `job-tracker-backup-${date}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setAutosaveMessage("Export ready.");
+    },
+    onError: (error) => setAutosaveMessage(messageFromError(error))
+  });
+
+  const restoreData = useMutation({
+    mutationFn: async () => {
+      if (!restorePayload) throw new Error("Choose a backup file first.");
+      return api.restoreData(restorePayload);
+    },
+    onSuccess: (action) => {
+      setRestorePayload(null);
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+      queryClient.invalidateQueries({ queryKey: ["session"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      setAutosaveMessage(action.message);
+    },
+    onError: (error) => setAutosaveMessage(messageFromError(error))
+  });
+
+  const chooseRestoreFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Backup file must contain a JSON object.");
+      }
+      setRestorePayload(parsed as Record<string, unknown>);
+    } catch (error) {
+      setAutosaveMessage(messageFromError(error));
+    } finally {
+      if (restoreInputRef.current) restoreInputRef.current.value = "";
+    }
+  };
+
+  const persistSettings = (patch: Partial<UserSettings>, requirePushSubscription = false) => {
+    const settings = currentSettings(patch);
+    const requestId = saveRequestIdRef.current + 1;
+    saveRequestIdRef.current = requestId;
+    save.mutate({ settings, requestId, requirePushSubscription });
+  };
+
+  const chooseAppearance = (value: Appearance) => persistSettings({ appearance: value });
+
+  const appearanceStatus = appearance === "system"
+    ? `System is using ${formatAppearance(resolvedAppearance)} mode on this device.`
+    : `${formatAppearance(appearance)} mode selected.`;
+
+  const pushUnsupported = pushSupportMessage();
+  const pushConfig = pushConfigQuery.data;
+  const pushUnavailable = Boolean(pushUnsupported || pushConfigQuery.isError || (pushConfig && !pushConfig.enabled));
+  const pushCopy = pushUnsupported ||
+    (pushConfigQuery.isError
+      ? "Could not check browser push configuration."
+      : pushConfig?.enabled
+        ? "Use browser push for new alerts by default."
+        : "Push delivery needs VAPID keys in the server environment.");
+
+  if (settingsQuery.isLoading) return <PanelLoading label="Loading settings" />;
+  if (settingsQuery.isError) return <EmptyState title="Settings unavailable" detail={messageFromError(settingsQuery.error)} />;
+
+  return (
+    <>
+      <header className="page-header">
+        <div className="page-label">// settings</div>
+        <h1 className="page-title">Settings</h1>
+        <p className="page-sub">Account-wide defaults for this Job Tracker workspace.</p>
+      </header>
+
+      <section className="card settings-card">
+        <div className="settings-section">
+          <div className="settings-heading">
+            <SettingsIcon size={18} />
+            <span>Appearance</span>
+          </div>
+          <SegmentedControl
+            label="Appearance"
+            value={appearance}
+            options={appearanceOptions}
+            onChange={chooseAppearance}
+          />
+          <div className="appearance-status">{appearanceStatus}</div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-heading">
+            <Bell size={18} />
+            <span>Notification Defaults</span>
+          </div>
+          <div className="notification-options">
+            <ToggleOption
+              title="Email alerts"
+              detail="Enable email for new alerts."
+              checked={defaultEmailEnabled}
+              onChange={(checked) => persistSettings({ default_email_enabled: checked })}
+            />
+            <ToggleOption
+              title="Browser push"
+              detail={pushConfigQuery.isLoading ? "Checking browser push support..." : pushCopy}
+              checked={defaultPushEnabled}
+              disabled={pushConfigQuery.isLoading}
+              muted={pushUnavailable && !defaultPushEnabled}
+              onChange={(checked) => {
+                if (checked && pushUnavailable) {
+                  setAutosaveMessage(pushCopy);
+                  return;
+                }
+                persistSettings({ default_push_enabled: checked }, checked && !defaultPushEnabled);
+              }}
+            />
+          </div>
+          <div className="notification-actions">
+            <Button
+              variant="ghost"
+              loading={testNotification.isPending}
+              icon={<Bell size={16} />}
+              onClick={() => testNotification.mutate()}
+            >
+              Test notification
+            </Button>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-heading">
+            <RefreshCcw size={18} />
+            <span>Check Interval</span>
+          </div>
+          <div className="field settings-number-field">
+            <label>Hours between scheduled checks</label>
+            <input
+              type="number"
+              min={1}
+              max={168}
+              step={1}
+              value={checkIntervalHours}
+              onChange={(event) => {
+                const rawValue = event.target.value;
+                setCheckIntervalHours(rawValue);
+                if (rawValue !== "") {
+                  persistSettings({ check_interval_hours: Number(rawValue) });
+                }
+              }}
+              onBlur={() => {
+                if (checkIntervalHours === "") {
+                  persistSettings({ check_interval_hours: 4 });
+                }
+              }}
+              placeholder="4"
+            />
+            <div className="field-hint">Use 1-168 hours. Leave blank to use 4 hours. Manual checks still run immediately.</div>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-heading">
+            <Download size={18} />
+            <span>Export / Restore Data</span>
+          </div>
+          <div className="data-actions">
+            <Button
+              variant="ghost"
+              loading={exportData.isPending}
+              icon={<Download size={16} />}
+              onClick={() => exportData.mutate()}
+            >
+              Export Data
+            </Button>
+            <Button
+              variant="ghost"
+              icon={<Upload size={16} />}
+              onClick={() => restoreInputRef.current?.click()}
+            >
+              Restore Data
+            </Button>
+            <input
+              ref={restoreInputRef}
+              className="visually-hidden"
+              type="file"
+              accept="application/json,.json"
+              onChange={(event) => chooseRestoreFile(event.target.files?.[0])}
+            />
+          </div>
+          <div className="field-hint">Restore replaces this account's alerts, jobs, notes, and defaults with the backup file.</div>
+        </div>
+
+        <div className="settings-autosave" aria-live="polite">{autosaveMessage}</div>
+      </section>
+      <section className="card app-info-card">
+        <div className="app-info-main">
+          <span className="app-info-icon">
+            <img src={APP_ICON_SRC} alt="" />
+          </span>
+          <div>
+            <div className="app-info-title">Job Tracker</div>
+            <div className="app-info-sub">{PRODUCT_TAGLINE}</div>
+          </div>
+        </div>
+        <div className="app-info-grid">
+          <div className="app-info-item">
+            <Info size={16} />
+            <span>Developer</span>
+            <strong>{APP_DEVELOPER}</strong>
+          </div>
+          <div className="app-info-item">
+            <Info size={16} />
+            <span>Build</span>
+            <strong>{APP_BUILD}</strong>
+          </div>
+        </div>
+        <Button variant="ghost" icon={<Heart size={16} />} onClick={() => setAutosaveMessage("Donation support is coming later.")}>
+          Donate
+        </Button>
+      </section>
+      <ConfirmModal
+        open={Boolean(restorePayload)}
+        title="Restore backup?"
+        detail="This will replace this account's current alerts, saved jobs, statuses, notes, and defaults."
+        confirmLabel="Restore"
+        pending={restoreData.isPending}
+        onClose={() => setRestorePayload(null)}
+        onConfirm={() => restoreData.mutate()}
+      />
+    </>
   );
 }
 
@@ -1320,10 +2071,6 @@ function JobsPage({ notify }: { notify: (message: string, category?: Category) =
     queryFn: api.jobs
   });
 
-  useEffect(() => {
-    if (jobsQuery.isError) notify(messageFromError(jobsQuery.error), "error");
-  }, [jobsQuery.isError]);
-
   return (
     <>
       <header className="page-header">
@@ -1340,7 +2087,10 @@ function JobsPage({ notify }: { notify: (message: string, category?: Category) =
               <div className="jobs-table-row" key={`${job.watch_id}-${job.job_id}`}>
                 <div>
                   <div className="job-table-title">{job.title}</div>
-                  <div className="job-table-meta">{job.company_name} / {job.location || "Location not listed"} / Found {formatDate(job.found_at || null)}</div>
+                  <div className="job-table-meta">
+                    {job.company_name} / {job.location || "Location not listed"} / Found {formatDate(job.found_at || null)}
+                    {formatJobStatus(job.status) ? ` / ${formatJobStatus(job.status)}` : ""}
+                  </div>
                 </div>
                 {job.url && (
                   <ButtonLink size="sm" href={job.url} target="_blank" rel="noreferrer" icon={<ExternalLink size={14} />}>

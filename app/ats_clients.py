@@ -38,12 +38,27 @@ BOARD_URL_RE = re.compile(
 
 
 def _keywords_match(title, keywords_str):
-    """Return True if ANY keyword appears in the job title (case-insensitive). Empty = match all."""
-    if not keywords_str.strip():
+    """Match any positive keyword while excluding titles with negative keywords."""
+    terms = [k.strip().lower() for k in keywords_str.split(',') if k.strip()]
+    if not terms:
         return True
-    keywords = [k.strip().lower() for k in keywords_str.split(',') if k.strip()]
+
+    positive = []
+    negative = []
+    for term in terms:
+        if term.startswith('-') or term.startswith('!'):
+            excluded = term[1:].strip()
+            if excluded:
+                negative.append(excluded)
+        else:
+            positive.append(term)
+
     title_lower = title.lower()
-    return any(kw in title_lower for kw in keywords)
+    if any(term in title_lower for term in negative):
+        return False
+    if not positive:
+        return True
+    return any(term in title_lower for term in positive)
 
 
 def _make_job_id(text, url=''):

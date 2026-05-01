@@ -1,4 +1,6 @@
 import hmac
+import ipaddress
+import json
 import logging
 import os
 import secrets
@@ -13,6 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 try:
     from authlib.deprecate import AuthlibDeprecationWarning
@@ -31,6 +34,12 @@ try:
 except ImportError:  # Authlib is optional unless Authentik/OIDC is enabled.
     OAuth = None
     OAuthError = Exception
+
+try:
+    from pywebpush import WebPushException, webpush
+except ImportError:  # pywebpush is optional unless VAPID keys are configured.
+    WebPushException = Exception
+    webpush = None
 
 from . import database as db
 from .ats_clients import check_watch
@@ -52,14 +61,36 @@ DIST_DIR = APP_DIR / "frontend_dist"
 
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
-    if raw is None:
+    if raw is None or raw.strip() == "":
         return default
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
-SECRET_KEY = os.environ.get("SECRET_KEY")
-CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL_HOURS", "4"))
+def _env_int(name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer.") from exc
+    if minimum is not None and value < minimum:
+        raise RuntimeError(f"{name} must be at least {minimum}.")
+    if maximum is not None and value > maximum:
+        raise RuntimeError(f"{name} must be at most {maximum}.")
+    return value
+
+
+SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "").strip().rstrip("/")
+CHECK_INTERVAL = _env_int("CHECK_INTERVAL_HOURS", 4, minimum=1, maximum=168)
+SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", APP_BASE_URL.startswith("https://"))
+TRUSTED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("TRUSTED_HOSTS", "").split(",")
+    if host.strip()
+]
+LOCAL_TRUSTED_HOSTS = ["127.0.0.1", "localhost"]
 AUTHENTIK_LOGIN_PATH = "/auth/authentik/login"
 AUTHENTIK_CALLBACK_PATH = "/auth/authentik/callback"
 AUTHENTIK_ENABLED = _env_bool("AUTHENTIK_ENABLED") or _env_bool("OIDC_ENABLED")
@@ -88,11 +119,27 @@ AUTHENTIK_LOGIN_BUTTON_TEXT = (
 AUTHENTIK_AUTO_REGISTER = _env_bool("AUTHENTIK_AUTO_REGISTER", True)
 AUTHENTIK_REQUIRE_VERIFIED_EMAIL = _env_bool("AUTHENTIK_REQUIRE_VERIFIED_EMAIL", True)
 AUTHENTIK_DISABLE_PASSWORD_LOGIN = _env_bool("AUTHENTIK_DISABLE_PASSWORD_LOGIN", False)
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "").strip() or APP_BASE_URL or "mailto:admin@example.com"
 MAX_COMPANY_LENGTH = 120
 MAX_URL_LENGTH = 2048
 MAX_KEYWORDS_LENGTH = 300
 MAX_EMAIL_LENGTH = 254
 MAX_PASSWORD_LENGTH = 256
+MAX_PUSH_ENDPOINT_LENGTH = 2048
+MAX_PUSH_KEY_LENGTH = 512
+MAX_JOB_NOTES_LENGTH = 4000
+APPEARANCE_CHOICES = {"system", "light", "dark"}
+JOB_STATUS_CHOICES = {"", "interested", "applied", "ignored", "saved"}
+REGISTRATION_MODE = os.environ.get("REGISTRATION_MODE", "first-user-only").strip().lower()
+if os.environ.get("ALLOW_REGISTRATION") is not None:
+    REGISTRATION_MODE = "open" if _env_bool("ALLOW_REGISTRATION") else "disabled"
+INSECURE_SECRET_KEYS = {
+    "change-me",
+    "change-me-to-a-long-random-value",
+    "test-secret-key",
+}
 
 oauth = OAuth() if OAuth else None
 _authentik_client: Any | None = None
@@ -100,12 +147,17 @@ _scheduler: BackgroundScheduler | None = None
 
 
 app = FastAPI(title="Job Tracker API")
+if TRUSTED_HOSTS:
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[*TRUSTED_HOSTS, *LOCAL_TRUSTED_HOSTS],
+    )
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY or secrets.token_urlsafe(32),
     session_cookie="job_tracker_session",
     same_site="lax",
-    https_only=False,
+    https_only=SESSION_COOKIE_SECURE,
 )
 
 
@@ -125,6 +177,7 @@ class SessionOut(BaseModel):
     csrf_token: str
     user: UserOut | None = None
     check_interval: int = CHECK_INTERVAL
+    registration_enabled: bool = True
     authentik_enabled: bool = False
     authentik_login_url: str | None = None
     authentik_login_button_text: str = ""
@@ -156,8 +209,48 @@ class NotificationIn(BaseModel):
     push_enabled: bool = False
 
 
+class PushSubscriptionKeysIn(BaseModel):
+    p256dh: str = Field(min_length=1, max_length=MAX_PUSH_KEY_LENGTH)
+    auth: str = Field(min_length=1, max_length=MAX_PUSH_KEY_LENGTH)
+
+
+class PushSubscriptionIn(BaseModel):
+    endpoint: str = Field(min_length=1, max_length=MAX_PUSH_ENDPOINT_LENGTH)
+    keys: PushSubscriptionKeysIn
+
+
+class PushSubscriptionDeleteIn(BaseModel):
+    endpoint: str = Field(min_length=1, max_length=MAX_PUSH_ENDPOINT_LENGTH)
+
+
+class PushConfigOut(BaseModel):
+    enabled: bool
+    public_key: str | None = None
+
+
+class PushSubscriptionOut(BaseModel):
+    ok: bool = True
+    subscribed: bool = True
+
+
+class UserSettingsIn(BaseModel):
+    appearance: str = "system"
+    default_email_enabled: bool = True
+    default_push_enabled: bool = False
+    check_interval_hours: int = Field(default=CHECK_INTERVAL, ge=1, le=168)
+
+
+class UserSettingsOut(UserSettingsIn):
+    pass
+
+
 class ReorderIn(BaseModel):
     watch_ids: list[int]
+
+
+class JobMetaIn(BaseModel):
+    status: str = ""
+    notes: str = Field(default="", max_length=MAX_JOB_NOTES_LENGTH)
 
 
 class JobOut(BaseModel):
@@ -171,6 +264,8 @@ class JobOut(BaseModel):
     notified_at: str | None = None
     company_name: str | None = None
     keywords: str | None = None
+    status: str = ""
+    notes: str = ""
 
 
 class DiagnosticOut(BaseModel):
@@ -198,6 +293,7 @@ class StatsOut(BaseModel):
     alerts: int
     jobs: int
     interval: int
+    weekly_new_jobs: int = 0
 
 
 class DashboardOut(BaseModel):
@@ -249,6 +345,78 @@ def _email_enabled(watch: Any) -> bool:
 
 def _push_enabled(watch: Any) -> bool:
     return bool(_row_value(watch, "push_enabled", 0))
+
+
+def _push_available() -> bool:
+    return bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY and webpush is not None)
+
+
+def _push_config_out() -> PushConfigOut:
+    return PushConfigOut(enabled=_push_available(), public_key=VAPID_PUBLIC_KEY or None)
+
+
+def _validate_push_endpoint(endpoint: str) -> str | None:
+    parsed = urlparse((endpoint or "").strip())
+    if parsed.scheme != "https":
+        return "Browser push endpoints must use HTTPS."
+    if not parsed.hostname:
+        return "Browser push endpoint is not valid."
+    if parsed.username or parsed.password:
+        return "Browser push endpoints cannot include usernames or passwords."
+
+    try:
+        parsed.port
+    except ValueError:
+        return "Browser push endpoint has an invalid port."
+
+    host = parsed.hostname.strip("[]").lower()
+    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+        return "Browser push endpoint must be a public push service URL."
+    if host.endswith(".local") or "." not in host:
+        return "Browser push endpoint must be a public push service URL."
+
+    try:
+        if not ipaddress.ip_address(host).is_global:
+            return "Browser push endpoint must be a public push service URL."
+    except ValueError:
+        pass
+
+    return None
+
+
+def _secret_key_is_insecure(value: str) -> bool:
+    normalized = (value or "").strip().lower()
+    return (
+        not normalized or
+        len(normalized) < 32 or
+        "change-me" in normalized or
+        normalized in INSECURE_SECRET_KEYS
+    )
+
+
+def _settings_out(settings: Any) -> UserSettingsOut:
+    appearance = str(_row_value(settings, "appearance", "system") or "system")
+    if appearance not in APPEARANCE_CHOICES:
+        appearance = "system"
+    return UserSettingsOut(
+        appearance=appearance,
+        default_email_enabled=bool(_row_value(settings, "default_email_enabled", 1)),
+        default_push_enabled=bool(_row_value(settings, "default_push_enabled", 0)),
+        check_interval_hours=db.get_check_interval_hours(CHECK_INTERVAL),
+    )
+
+
+def _registration_enabled() -> bool:
+    mode = REGISTRATION_MODE
+    if mode == "open":
+        return True
+    if mode == "disabled":
+        return False
+    return db.count_users() == 0
+
+
+def _current_check_interval() -> int:
+    return db.get_check_interval_hours(CHECK_INTERVAL)
 
 
 def _get_csrf_token(request: Request) -> str:
@@ -372,6 +540,8 @@ def _session_out(request: Request, authenticated: bool, user: Any | None = None)
         authenticated=authenticated,
         csrf_token=_get_csrf_token(request),
         user=_user_out(user) if user else None,
+        check_interval=_current_check_interval(),
+        registration_enabled=_registration_enabled(),
         authentik_enabled=AUTHENTIK_ENABLED,
         authentik_login_url=AUTHENTIK_LOGIN_PATH if AUTHENTIK_ENABLED else None,
         authentik_login_button_text=AUTHENTIK_LOGIN_BUTTON_TEXT,
@@ -462,16 +632,97 @@ def _job_ids(jobs: list[Any]) -> list[str]:
     return [str(job["job_id"]) for job in jobs]
 
 
+def _push_payload(watch: Any, new_jobs: list[Any]) -> dict[str, Any]:
+    count = len(new_jobs)
+    company = str(watch["company_name"])
+    preview_titles = [str(_row_value(job, "title", "")) for job in new_jobs[:2]]
+    body = ", ".join(preview_titles)
+    if count > 2:
+        body += f", +{count - 2} more"
+    if not body:
+        body = f"{count} new listing{'s' if count != 1 else ''} found."
+    return {
+        "title": f"New job{'s' if count != 1 else ''} at {company}",
+        "body": body,
+        "url": "/jobs",
+    }
+
+
+def _send_push_to_user(user_id: int, payload_data: dict[str, Any], context: str = "user") -> dict[str, int]:
+    stats = {"sent": 0, "failed": 0, "stale": 0}
+    if not _push_available():
+        logger.warning("Push notification requested for %s, but VAPID push is not configured.", context)
+        stats["failed"] = 1
+        return stats
+
+    payload = json.dumps(payload_data)
+    subscriptions = list(db.get_active_push_subscriptions(user_id))
+    if not subscriptions:
+        return stats
+
+    for subscription in subscriptions:
+        endpoint = str(subscription["endpoint"])
+        endpoint_error = _validate_push_endpoint(endpoint)
+        if endpoint_error:
+            db.deactivate_push_subscription(endpoint, user_id)
+            stats["stale"] += 1
+            logger.warning("Removed unsafe push subscription for user %s: %s", user_id, endpoint_error)
+            continue
+        try:
+            webpush(
+                subscription_info={
+                    "endpoint": endpoint,
+                    "keys": {
+                        "p256dh": str(subscription["p256dh"]),
+                        "auth": str(subscription["auth"]),
+                    },
+                },
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={"sub": VAPID_SUBJECT},
+            )
+            stats["sent"] += 1
+        except WebPushException as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code in (404, 410):
+                db.deactivate_push_subscription(endpoint, user_id)
+                stats["stale"] += 1
+                logger.info("Removed stale push subscription for user %s", user_id)
+            else:
+                stats["failed"] += 1
+                logger.warning("Push notification failed for user %s: %s", user_id, exc)
+        except Exception as exc:
+            stats["failed"] += 1
+            logger.warning("Push notification failed for user %s: %s", user_id, exc)
+    return stats
+
+
+def _send_push_alert(watch: Any, new_jobs: list[Any]) -> dict[str, int]:
+    stats = {"sent": 0, "failed": 0, "stale": 0}
+    if not new_jobs or not _push_enabled(watch):
+        return stats
+    if not _push_available():
+        logger.warning("Push is enabled for %s, but VAPID push is not configured.", watch["company_name"])
+        stats["failed"] = 1
+        return stats
+    return _send_push_to_user(int(watch["user_id"]), _push_payload(watch, new_jobs), str(watch["company_name"]))
+
+
 def _notify_for_new_jobs(watch: Any, recipient_email: str, new_jobs: list[Any]) -> str:
     if not new_jobs:
         return "none"
+    push_stats = _send_push_alert(watch, new_jobs)
+    push_sent = push_stats["sent"] > 0
     if not _email_enabled(watch):
         db.mark_jobs_notified(watch["id"], _job_ids(new_jobs))
-        return "paused"
+        return "push" if push_sent else "paused"
     sent = send_job_alert(recipient_email, watch["company_name"], new_jobs)
     if sent:
         db.mark_jobs_notified(watch["id"], _job_ids(new_jobs))
         return "sent"
+    if push_sent:
+        db.mark_jobs_notified(watch["id"], _job_ids(new_jobs))
+        return "push"
     return "failed"
 
 
@@ -529,6 +780,9 @@ def run_user_checks(user_id: int, user_email: str) -> dict[str, int]:
 
 
 def _serialize_job(job: Any) -> JobOut:
+    job_status = str(_row_value(job, "status", "") or "").strip().lower()
+    if job_status not in JOB_STATUS_CHOICES:
+        job_status = ""
     return JobOut(
         id=_row_value(job, "id"),
         watch_id=_row_value(job, "watch_id"),
@@ -540,6 +794,8 @@ def _serialize_job(job: Any) -> JobOut:
         notified_at=str(_row_value(job, "notified_at", "") or "") or None,
         company_name=_row_value(job, "company_name"),
         keywords=_row_value(job, "keywords"),
+        status=job_status,
+        notes=str(_row_value(job, "notes", "") or ""),
     )
 
 
@@ -568,7 +824,12 @@ def _dashboard_for_user(user_id: int) -> DashboardOut:
     watches = [_serialize_watch(watch) for watch in db.get_watches_for_user(user_id)]
     return DashboardOut(
         watches=watches,
-        stats=StatsOut(alerts=len(watches), jobs=sum(watch.job_count for watch in watches), interval=CHECK_INTERVAL),
+        stats=StatsOut(
+            alerts=len(watches),
+            jobs=sum(watch.job_count for watch in watches),
+            interval=_current_check_interval(),
+            weekly_new_jobs=db.get_weekly_new_jobs_count(user_id),
+        ),
     )
 
 
@@ -581,6 +842,8 @@ def _check_message(watch: Any, user_email: str, new_jobs: list[Any], expired: in
         count = len(new_jobs)
         if notification == "sent":
             return f"Found {count} new job{'s' if count != 1 else ''} at {company}. Check your email.", "success"
+        if notification == "push":
+            return f"Found {count} new job{'s' if count != 1 else ''} at {company}. Browser push notification sent.", "success"
         if notification == "paused":
             return f"Found {count} new job{'s' if count != 1 else ''} at {company}. Email is paused, so they were saved without sending an alert.", "success"
         return f"Found {count} new job{'s' if count != 1 else ''} at {company}, but the email alert could not be sent.", "error"
@@ -620,11 +883,23 @@ async def _authentik_logout_url(request: Request, id_token: str | None) -> str |
 
 
 def validate_startup_config() -> None:
-    if not SECRET_KEY:
-        message = "SECRET_KEY is not set; sessions will be invalidated on each container restart."
-        if os.environ.get("REQUIRE_SECRET_KEY") == "1":
+    if REGISTRATION_MODE not in ("first-user-only", "open", "disabled"):
+        raise RuntimeError("REGISTRATION_MODE must be first-user-only, open, or disabled.")
+    if _secret_key_is_insecure(SECRET_KEY):
+        message = "SECRET_KEY must be set to a unique random value before running this app publicly."
+        if _env_bool("REQUIRE_SECRET_KEY"):
             raise RuntimeError(message)
         logger.warning(message)
+    if APP_BASE_URL:
+        parsed_base_url = urlparse(APP_BASE_URL)
+        if parsed_base_url.scheme not in ("http", "https") or not parsed_base_url.netloc:
+            raise RuntimeError("APP_BASE_URL must be a full http:// or https:// URL.")
+        if parsed_base_url.scheme != "https":
+            logger.warning("APP_BASE_URL is not HTTPS; use HTTPS for public deployments.")
+    if APP_BASE_URL.startswith("https://") and not SESSION_COOKIE_SECURE:
+        logger.warning("APP_BASE_URL is HTTPS but SESSION_COOKIE_SECURE is disabled.")
+    if TRUSTED_HOSTS:
+        logger.info("Trusted host middleware enabled for: %s", ", ".join(TRUSTED_HOSTS))
     if AUTHENTIK_ENABLED:
         if OAuth is None:
             raise RuntimeError("AUTHENTIK_ENABLED requires authlib to be installed.")
@@ -635,6 +910,11 @@ def validate_startup_config() -> None:
             "Authentik/OIDC enabled; callback URL should be %s",
             _configured_external_url_for_path(AUTHENTIK_CALLBACK_PATH),
         )
+    if VAPID_PUBLIC_KEY or VAPID_PRIVATE_KEY:
+        if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+            logger.warning("Both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required for browser push notifications.")
+        elif webpush is None:
+            raise RuntimeError("VAPID push is configured but pywebpush is not installed.")
     if not os.environ.get("SMTP_USER") or not os.environ.get("SMTP_PASS"):
         logger.warning("SMTP_USER/SMTP_PASS are not fully configured; email alerts will be retried until SMTP works.")
 
@@ -646,10 +926,20 @@ def start_scheduler() -> None:
         return
     if _scheduler and _scheduler.running:
         return
+    interval = _current_check_interval()
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(run_all_checks, "interval", hours=CHECK_INTERVAL, id="job_check", max_instances=1, coalesce=True)
+    _scheduler.add_job(run_all_checks, "interval", hours=interval, id="job_check", max_instances=1, coalesce=True)
     _scheduler.start()
-    logger.info("Scheduler started; checking every %s hours", CHECK_INTERVAL)
+    logger.info("Scheduler started; checking every %s hours", interval)
+
+
+def reschedule_scheduler(hours: int) -> None:
+    if not _scheduler or not _scheduler.running:
+        return
+    job = _scheduler.get_job("job_check")
+    if job:
+        job.reschedule(trigger="interval", hours=hours)
+        logger.info("Scheduler interval changed to every %s hours", hours)
 
 
 @app.on_event("startup")
@@ -688,6 +978,8 @@ async def login(payload: LoginIn, request: Request) -> SessionOut:
 async def register(payload: RegisterIn, request: Request) -> SessionOut:
     if AUTHENTIK_DISABLE_PASSWORD_LOGIN:
         raise HTTPException(status_code=403, detail="Local account registration is disabled. Use SSO to continue.")
+    if not _registration_enabled():
+        raise HTTPException(status_code=403, detail="Local account registration is disabled.")
     email = payload.email.strip().lower()
     if not _is_valid_email(email):
         raise HTTPException(status_code=400, detail="Please provide a valid email address.")
@@ -754,6 +1046,104 @@ async def logout(request: Request) -> LogoutOut:
     return LogoutOut(logout_url=logout_url)
 
 
+@app.get("/api/push/config", response_model=PushConfigOut)
+async def push_config(user: Any = Depends(current_user)) -> PushConfigOut:
+    return _push_config_out()
+
+
+@app.post("/api/push/subscriptions", response_model=PushSubscriptionOut, dependencies=[Depends(require_csrf)])
+async def save_push_subscription(
+    payload: PushSubscriptionIn,
+    request: Request,
+    user: Any = Depends(current_user),
+) -> PushSubscriptionOut:
+    if not _push_available():
+        raise HTTPException(status_code=400, detail="Browser push is not configured.")
+    endpoint_error = _validate_push_endpoint(payload.endpoint)
+    if endpoint_error:
+        raise HTTPException(status_code=400, detail=endpoint_error)
+    db.upsert_push_subscription(
+        int(user["id"]),
+        payload.endpoint,
+        payload.keys.p256dh,
+        payload.keys.auth,
+        request.headers.get("User-Agent", "")[:300],
+    )
+    return PushSubscriptionOut()
+
+
+@app.delete("/api/push/subscriptions", response_model=PushSubscriptionOut, dependencies=[Depends(require_csrf)])
+async def delete_push_subscription(
+    payload: PushSubscriptionDeleteIn,
+    user: Any = Depends(current_user),
+) -> PushSubscriptionOut:
+    db.deactivate_push_subscription(payload.endpoint, int(user["id"]))
+    return PushSubscriptionOut(subscribed=False)
+
+
+@app.get("/api/settings", response_model=UserSettingsOut)
+async def get_settings(user: Any = Depends(current_user)) -> UserSettingsOut:
+    return _settings_out(db.get_user_settings(int(user["id"])))
+
+
+@app.put("/api/settings", response_model=UserSettingsOut, dependencies=[Depends(require_csrf)])
+async def update_settings(payload: UserSettingsIn, user: Any = Depends(current_user)) -> UserSettingsOut:
+    appearance = payload.appearance.strip().lower()
+    if appearance not in APPEARANCE_CHOICES:
+        raise HTTPException(status_code=400, detail="Appearance must be system, light, or dark.")
+    interval = db.set_check_interval_hours(payload.check_interval_hours)
+    reschedule_scheduler(interval)
+    settings = db.upsert_user_settings(
+        int(user["id"]),
+        appearance,
+        payload.default_email_enabled,
+        payload.default_push_enabled,
+    )
+    return _settings_out(settings)
+
+
+@app.get("/api/data/export")
+async def export_data(user: Any = Depends(current_user)) -> dict[str, Any]:
+    return db.export_user_data(int(user["id"]), check_interval_hours=_current_check_interval())
+
+
+@app.post("/api/data/restore", response_model=ActionOut, dependencies=[Depends(require_csrf)])
+async def restore_data(payload: dict[str, Any], user: Any = Depends(current_user)) -> ActionOut:
+    try:
+        interval = db.restore_user_data(int(user["id"]), payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    reschedule_scheduler(interval)
+    dashboard_data = _dashboard_for_user(int(user["id"]))
+    return ActionOut(
+        message="Data restored.",
+        category="success",
+        watches=dashboard_data.watches,
+        stats=dashboard_data.stats,
+    )
+
+
+@app.post("/api/settings/test-notification", response_model=ActionOut, dependencies=[Depends(require_csrf)])
+async def test_notification(user: Any = Depends(current_user)) -> ActionOut:
+    if not _push_available():
+        raise HTTPException(status_code=400, detail="Browser push is not configured.")
+
+    stats = _send_push_to_user(
+        int(user["id"]),
+        {
+            "title": "Job Tracker",
+            "body": "Test notification sent from settings.",
+            "url": "/settings",
+        },
+        "settings test",
+    )
+    if stats["sent"] <= 0:
+        if stats["stale"] > 0:
+            raise HTTPException(status_code=400, detail="That browser push subscription is no longer active.")
+        raise HTTPException(status_code=400, detail="No active browser push subscription found for this device.")
+    return ActionOut(message="Test notification sent.", category="success")
+
+
 @app.get("/api/dashboard", response_model=DashboardOut)
 async def dashboard(user: Any = Depends(current_user)) -> DashboardOut:
     return _dashboard_for_user(int(user["id"]))
@@ -762,6 +1152,25 @@ async def dashboard(user: Any = Depends(current_user)) -> DashboardOut:
 @app.get("/api/jobs", response_model=list[JobOut])
 async def jobs(user: Any = Depends(current_user)) -> list[JobOut]:
     return [_serialize_job(job) for job in db.get_recent_jobs_for_user(int(user["id"]), limit=200)]
+
+
+@app.get("/api/watches/{watch_id}/jobs", response_model=list[JobOut])
+async def watch_jobs(watch_id: int, user: Any = Depends(current_user)) -> list[JobOut]:
+    watch = db.get_watch_for_user(watch_id, int(user["id"]))
+    if not watch:
+        raise HTTPException(status_code=404, detail="Alert not found.")
+    return [_serialize_job(job) for job in db.get_jobs_for_watch_for_user(watch_id, int(user["id"]))]
+
+
+@app.patch("/api/jobs/{found_job_id}", response_model=JobOut, dependencies=[Depends(require_csrf)])
+async def update_job_meta(found_job_id: int, payload: JobMetaIn, user: Any = Depends(current_user)) -> JobOut:
+    status_value = payload.status.strip().lower()
+    if status_value not in JOB_STATUS_CHOICES:
+        raise HTTPException(status_code=400, detail="Job status must be interested, applied, ignored, saved, or blank.")
+    job = db.update_job_meta(found_job_id, int(user["id"]), status_value, payload.notes)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return _serialize_job(job)
 
 
 @app.post("/api/preview", response_model=PreviewOut, dependencies=[Depends(require_csrf)])
@@ -783,7 +1192,17 @@ async def preview(payload: WatchIn, user: Any = Depends(current_user)) -> Previe
 @app.post("/api/watches", response_model=ActionOut, dependencies=[Depends(require_csrf)])
 async def create_watch(payload: WatchIn, user: Any = Depends(current_user)) -> ActionOut:
     company, url, keywords = _validate_alert_input(payload, int(user["id"]))
-    watch_id = db.add_watch(int(user["id"]), company, url, "custom", None, keywords)
+    settings = _settings_out(db.get_user_settings(int(user["id"])))
+    watch_id = db.add_watch(
+        int(user["id"]),
+        company,
+        url,
+        "custom",
+        None,
+        keywords,
+        email_enabled=settings.default_email_enabled,
+        push_enabled=settings.default_push_enabled,
+    )
     watch = db.get_watch_for_user(watch_id, int(user["id"]))
     new_jobs, expired, error = _run_check(watch)
     message, category = _check_message(watch, str(user["email"]), new_jobs, expired, error)

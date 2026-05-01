@@ -10,12 +10,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Job Tracker">
     <title>{% block title %}Job Tracker{% endblock %}</title>
-    <link rel="manifest" href="{{ url_for('webmanifest') }}">
-    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-    <link rel="icon" type="image/png" sizes="192x192" href="/static/logo-192.png">
-    <link rel="apple-touch-icon" href="/static/logo-192.png">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="{{ url_for('webmanifest') }}?v=20260501-brand">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico?v=20260501-brand">
+    <link rel="icon" type="image/png" sizes="192x192" href="/static/logo-192.png?v=20260501-brand">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=20260501-brand">
     <style>
         :root {
             --bg: #0d1117;
@@ -32,8 +30,8 @@
             --text-faint: #484f58;
             --green: #3fb950;
             --red: #f85149;
-            --mono: 'Google Sans', sans-serif;
-            --sans: 'Google Sans', sans-serif;
+            --mono: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             --radius: 7px;
         }
 
@@ -1108,13 +1106,13 @@
         <div class="nav-inner">
             <a href="/" class="nav-logo">
                 <div class="nav-logo-mark">
-                    <img src="/static/logo.png"
+                    <img src="/static/logo.png?v=20260501-brand"
                          onerror="this.style.display='none'; this.parentElement.textContent='JT';"
                          alt="Logo">
                 </div>
                 <div>
                     <div class="nav-logo-text">Job Tracker</div>
-                    <div class="nav-logo-sub">jobs.overbay.app</div>
+                    <div class="nav-logo-sub">self-hosted job alerts</div>
                 </div>
             </a>
 
@@ -1164,7 +1162,7 @@
 
     {% if current_user.is_authenticated %}
     <footer>
-        job-tracker · jobs.overbay.app · checks every {{ check_interval if check_interval is defined else '4' }}h
+        job-tracker / self-hosted job alerts / checks every {{ check_interval if check_interval is defined else '4' }}h
     </footer>
     {% endif %}
 

@@ -9,6 +9,7 @@ os.environ.setdefault("DISABLE_SCHEDULER", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
 from app import database as db
+from app import ats_clients
 from app import main
 
 
@@ -38,6 +39,11 @@ class ApiTests(unittest.TestCase):
             "AUTHENTIK_DISPLAY_NAME": main.AUTHENTIK_DISPLAY_NAME,
             "AUTHENTIK_LOGIN_BUTTON_TEXT": main.AUTHENTIK_LOGIN_BUTTON_TEXT,
             "_authentik_client": main._authentik_client,
+            "VAPID_PUBLIC_KEY": main.VAPID_PUBLIC_KEY,
+            "VAPID_PRIVATE_KEY": main.VAPID_PRIVATE_KEY,
+            "VAPID_SUBJECT": main.VAPID_SUBJECT,
+            "webpush": main.webpush,
+            "REGISTRATION_MODE": main.REGISTRATION_MODE,
         }
         self.addCleanup(self._restore_auth_config)
 
@@ -84,6 +90,31 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["authentik_login_url"], "/auth/authentik/login")
         self.assertEqual(payload["authentik_login_button_text"], "Log in with your SSO account")
         self.assertTrue(payload["password_login_enabled"])
+
+    def test_registration_is_first_user_only_by_default(self):
+        main.REGISTRATION_MODE = "first-user-only"
+        db.create_user("existing@example.com", "password123")
+
+        response = self.client.get("/api/session")
+        payload = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(payload["authenticated"])
+        self.assertFalse(payload["registration_enabled"])
+
+    def test_second_local_registration_is_blocked_by_default(self):
+        main.REGISTRATION_MODE = "first-user-only"
+        first_token = self._register(email="first@example.com")
+        self.client.post("/api/auth/logout", headers={"X-CSRF-Token": first_token})
+        token = self._csrf()
+
+        response = self.client.post(
+            "/api/auth/register",
+            json={"email": "second@example.com", "password": "password123"},
+            headers={"X-CSRF-Token": token},
+        )
+
+        self.assertEqual(response.status_code, 403, response.text)
 
     def test_password_auth_still_works_when_authentik_is_enabled(self):
         main.AUTHENTIK_ENABLED = True
@@ -194,6 +225,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["watch"]["job_count"], 1)
         self.assertEqual(payload["stats"]["alerts"], 1)
         self.assertEqual(payload["stats"]["jobs"], 1)
+        self.assertEqual(payload["stats"]["weekly_new_jobs"], 1)
+
+    def test_negative_keywords_exclude_matching_titles(self):
+        self.assertTrue(ats_clients._keywords_match("Mechanical Engineer", "engineer, -intern"))
+        self.assertFalse(ats_clients._keywords_match("Mechanical Engineering Intern", "engineer, -intern"))
+        self.assertTrue(ats_clients._keywords_match("Product Designer", "-intern"))
 
     def test_notification_update_returns_watch_without_fragment_html(self):
         token = self._register()
@@ -220,6 +257,182 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("html", payload)
         self.assertEqual(watch["email_enabled"], 0)
         self.assertEqual(watch["push_enabled"], 1)
+
+    def test_push_config_reports_vapid_key_availability(self):
+        token = self._register()
+        main.VAPID_PUBLIC_KEY = "public-key"
+        main.VAPID_PRIVATE_KEY = "private-key"
+        main.webpush = lambda **_kwargs: None
+
+        response = self.client.get("/api/push/config")
+        payload = response.json()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(payload["enabled"])
+        self.assertEqual(payload["public_key"], "public-key")
+        self.assertTrue(token)
+
+    def test_push_subscription_is_saved_for_current_user(self):
+        token = self._register()
+        main.VAPID_PUBLIC_KEY = "public-key"
+        main.VAPID_PRIVATE_KEY = "private-key"
+        main.webpush = lambda **_kwargs: None
+
+        response = self.client.post(
+            "/api/push/subscriptions",
+            json={
+                "endpoint": "https://push.example/subscription/1",
+                "keys": {
+                    "p256dh": "p256dh-key",
+                    "auth": "auth-key",
+                },
+            },
+            headers={"X-CSRF-Token": token},
+        )
+        subscriptions = db.get_active_push_subscriptions(1)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(subscriptions), 1)
+        self.assertEqual(subscriptions[0]["endpoint"], "https://push.example/subscription/1")
+
+    def test_push_subscription_rejects_local_endpoint(self):
+        token = self._register()
+        main.VAPID_PUBLIC_KEY = "public-key"
+        main.VAPID_PRIVATE_KEY = "private-key"
+        main.webpush = lambda **_kwargs: None
+
+        response = self.client.post(
+            "/api/push/subscriptions",
+            json={
+                "endpoint": "https://127.0.0.1/subscription/1",
+                "keys": {
+                    "p256dh": "p256dh-key",
+                    "auth": "auth-key",
+                },
+            },
+            headers={"X-CSRF-Token": token},
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("public push service", response.json()["detail"])
+        self.assertEqual(len(db.get_active_push_subscriptions(1)), 0)
+
+    def test_required_secret_rejects_example_value(self):
+        original_secret = main.SECRET_KEY
+        original_require_secret = os.environ.get("REQUIRE_SECRET_KEY")
+        main.SECRET_KEY = "change-me-to-something-random-and-long"
+        os.environ["REQUIRE_SECRET_KEY"] = "1"
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "SECRET_KEY"):
+                main.validate_startup_config()
+        finally:
+            main.SECRET_KEY = original_secret
+            if original_require_secret is None:
+                os.environ.pop("REQUIRE_SECRET_KEY", None)
+            else:
+                os.environ["REQUIRE_SECRET_KEY"] = original_require_secret
+
+    def test_settings_defaults_are_returned_for_current_user(self):
+        self._register()
+
+        response = self.client.get("/api/settings")
+        payload = response.json()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(payload["appearance"], "system")
+        self.assertTrue(payload["default_email_enabled"])
+        self.assertFalse(payload["default_push_enabled"])
+
+    def test_settings_update_controls_new_watch_notification_defaults(self):
+        token = self._register()
+        main.check_watch = fake_check([])
+
+        settings_response = self.client.put(
+            "/api/settings",
+            json={
+                "appearance": "dark",
+                "default_email_enabled": False,
+                "default_push_enabled": True,
+                "check_interval_hours": 12,
+            },
+            headers={"X-CSRF-Token": token},
+        )
+        watch_response = self.client.post(
+            "/api/watches",
+            json={
+                "company_name": "Defaults Co",
+                "careers_url": "https://example.com/defaults-careers",
+                "keywords": "",
+            },
+            headers={"X-CSRF-Token": token},
+        )
+        watch = db.get_watch_for_user(watch_response.json()["watch"]["id"], 1)
+
+        self.assertEqual(settings_response.status_code, 200, settings_response.text)
+        self.assertEqual(settings_response.json()["appearance"], "dark")
+        self.assertEqual(settings_response.json()["check_interval_hours"], 12)
+        self.assertEqual(watch_response.status_code, 200, watch_response.text)
+        self.assertFalse(watch_response.json()["watch"]["email_enabled"])
+        self.assertTrue(watch_response.json()["watch"]["push_enabled"])
+        self.assertEqual(watch["email_enabled"], 0)
+        self.assertEqual(watch["push_enabled"], 1)
+
+    def test_test_notification_sends_push_to_current_user_subscription(self):
+        token = self._register()
+        calls = []
+
+        def fake_webpush(**kwargs):
+            calls.append(kwargs)
+
+        main.VAPID_PUBLIC_KEY = "public-key"
+        main.VAPID_PRIVATE_KEY = "private-key"
+        main.webpush = fake_webpush
+        db.upsert_push_subscription(1, "https://push.example/subscription/1", "p256dh-key", "auth-key")
+
+        response = self.client.post(
+            "/api/settings/test-notification",
+            headers={"X-CSRF-Token": token},
+        )
+        payload = response.json()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(payload["message"], "Test notification sent.")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["subscription_info"]["endpoint"], "https://push.example/subscription/1")
+        self.assertIn("Test notification sent from settings.", calls[0]["data"])
+
+    def test_check_sends_push_for_push_enabled_watch(self):
+        token = self._register()
+        calls = []
+
+        def fake_webpush(**kwargs):
+            calls.append(kwargs)
+
+        main.VAPID_PUBLIC_KEY = "public-key"
+        main.VAPID_PRIVATE_KEY = "private-key"
+        main.webpush = fake_webpush
+        db.upsert_push_subscription(1, "https://push.example/subscription/1", "p256dh-key", "auth-key")
+        watch_id = db.add_watch(1, "Push Co", "https://push.example/careers", "custom", None, "")
+        db.set_watch_notification_settings(watch_id, 1, False, True)
+        main.check_watch = fake_check([
+            {
+                "job_id": "job-1",
+                "title": "Firmware Engineer",
+                "location": "Remote",
+                "url": "https://push.example/job-1",
+            }
+        ])
+
+        response = self.client.post(
+            f"/api/watches/{watch_id}/check",
+            headers={"X-CSRF-Token": token},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["subscription_info"]["endpoint"], "https://push.example/subscription/1")
+        self.assertIn("Firmware Engineer", calls[0]["data"])
 
     def test_reorder_persists_alert_order(self):
         token = self._register()
@@ -258,6 +471,49 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(payload["watch"]["job_count"], 1)
         self.assertEqual(payload["stats"]["jobs"], 1)
+
+    def test_job_notes_and_status_can_be_updated(self):
+        token = self._register()
+        watch_id = db.add_watch(1, "Notes Co", "https://notes.example/careers", "custom", None, "")
+        db.save_job_if_new(watch_id, "job-1", "Product Manager", "Remote", "https://notes.example/job-1")
+        job = db.get_jobs_for_watch(watch_id)[0]
+
+        response = self.client.patch(
+            f"/api/jobs/{job['id']}",
+            json={"status": "applied", "notes": "Talked to Sam."},
+            headers={"X-CSRF-Token": token},
+        )
+        payload = response.json()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(payload["status"], "applied")
+        self.assertEqual(payload["notes"], "Talked to Sam.")
+
+    def test_export_restore_round_trips_current_user_data(self):
+        token = self._register()
+        watch_id = db.add_watch(1, "Export Co", "https://export.example/careers", "custom", None, "engineer,-intern")
+        db.save_job_if_new(watch_id, "job-1", "Firmware Engineer", "Remote", "https://export.example/job-1")
+        job = db.get_jobs_for_watch(watch_id)[0]
+        db.update_job_meta(job["id"], 1, "saved", "Looks promising.")
+
+        export_response = self.client.get("/api/data/export")
+        backup = export_response.json()
+        db.delete_watch(watch_id, 1)
+
+        restore_response = self.client.post(
+            "/api/data/restore",
+            json=backup,
+            headers={"X-CSRF-Token": token},
+        )
+        watches = db.get_watches_for_user(1)
+        jobs = db.get_jobs_for_watch(watches[0]["id"])
+
+        self.assertEqual(export_response.status_code, 200, export_response.text)
+        self.assertEqual(restore_response.status_code, 200, restore_response.text)
+        self.assertEqual(watches[0]["company_name"], "Export Co")
+        self.assertEqual(watches[0]["keywords"], "engineer,-intern")
+        self.assertEqual(jobs[0]["status"], "saved")
+        self.assertEqual(jobs[0]["notes"], "Looks promising.")
 
 
 if __name__ == "__main__":

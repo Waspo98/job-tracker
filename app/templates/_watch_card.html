@@ -18,13 +18,7 @@
         </div>
 
         <div class="watch-icon">
-            {% if w.careers_url %}
-            <img src="https://www.google.com/s2/favicons?domain={{ w.careers_url | domain }}&sz=32"
-                 alt="{{ w.company_name[0] | upper }}"
-                 onerror="this.style.display='none'; this.parentElement.textContent='{{ w.company_name[0] | upper }}';">
-            {% else %}
             {{ w.company_name[0] | upper }}
-            {% endif %}
         </div>
 
         <div class="watch-summary">

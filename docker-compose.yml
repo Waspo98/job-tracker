@@ -2,20 +2,10 @@ services:
   job-tracker:
     build: .
     image: ${JOB_TRACKER_IMAGE:-job-tracker:local}
-    container_name: job-tracker
     restart: unless-stopped
     ports:
-      - "5055:5055"
+      - "${JOB_TRACKER_PORT:-5055}:5055"
     volumes:
       - ./data:/app/data
     env_file:
       - .env
-    networks:
-      - web_proxy
-      - internet
-
-networks:
-  web_proxy:
-    external: true
-  internet:
-    driver: bridge
