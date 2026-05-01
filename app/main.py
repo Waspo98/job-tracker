@@ -266,6 +266,10 @@ def _email_enabled(watch):
     return bool(value)
 
 
+def _push_enabled(watch):
+    return bool(_row_value(watch, 'push_enabled', 0))
+
+
 def _job_ids(jobs):
     return [job['job_id'] for job in jobs]
 
@@ -846,6 +850,31 @@ def toggle_email(watch_id):
     if _wants_json():
         return _json_watch_response(watch_id, message, category)
     flash(message, category)
+    return redirect(url_for('dashboard') + f'#watch-{watch_id}')
+
+
+@app.route('/notifications/<int:watch_id>', methods=['POST'])
+@login_required
+def update_notifications(watch_id):
+    watch = db.get_watch_for_user(watch_id, current_user.id)
+    if not watch:
+        if _wants_json():
+            return jsonify({'ok': False, 'message': 'Alert not found.', 'category': 'error'}), 404
+        flash('Alert not found.', 'error')
+        return redirect(url_for('dashboard') + '#alerts-section')
+
+    email_enabled = request.form.get('email_enabled') == '1'
+    push_enabled = request.form.get('push_enabled') == '1'
+    if not db.set_watch_notification_settings(watch_id, current_user.id, email_enabled, push_enabled):
+        if _wants_json():
+            return jsonify({'ok': False, 'message': 'Could not update notification settings.', 'category': 'error'}), 500
+        flash('Could not update notification settings.', 'error')
+        return redirect(url_for('dashboard') + f'#watch-{watch_id}')
+
+    message = f'Notification settings saved for {watch["company_name"]}.'
+    if _wants_json():
+        return _json_watch_response(watch_id, message, 'success')
+    flash(message, 'success')
     return redirect(url_for('dashboard') + f'#watch-{watch_id}')
 
 

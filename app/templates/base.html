@@ -1312,18 +1312,23 @@
         if (!selector || !html) return null;
         const target = document.querySelector(selector);
         if (!target) return null;
+        const preserveReorderMode = target.matches('[data-reorder-list]') && target.hasAttribute('data-reorder-active');
 
         const template = document.createElement('template');
         template.innerHTML = html.trim();
 
         if (mode === 'inner') {
             target.innerHTML = template.innerHTML;
+            if (preserveReorderMode) setReorderMode(true);
             return target;
         }
 
         const replacement = template.content.firstElementChild;
         if (!replacement) return null;
         target.replaceWith(replacement);
+        if (preserveReorderMode && replacement.matches('[data-reorder-list]')) {
+            setReorderMode(true);
+        }
         replacement.dataset.fresh = 'true';
         window.setTimeout(() => replacement.removeAttribute('data-fresh'), 320);
         return replacement;
@@ -1382,6 +1387,10 @@
             }
 
             const payload = await response.json();
+            const modal = form.closest('.app-modal');
+            if (response.ok && payload.ok && modal && form.hasAttribute('data-close-modal-on-success')) {
+                closeModal(modal);
+            }
             if (payload.html && payload.replace_target) {
                 replaceFragment(payload.replace_target, payload.html, payload.replace_mode);
             }
@@ -1418,6 +1427,22 @@
         }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
     }
 
+    function setReorderMode(active) {
+        const list = document.querySelector('[data-reorder-list]');
+        const toggle = document.querySelector('[data-reorder-toggle]');
+        if (!list || !toggle) return;
+
+        if (active) {
+            list.setAttribute('data-reorder-active', '');
+            toggle.setAttribute('aria-pressed', 'true');
+            toggle.textContent = 'Done';
+        } else {
+            list.removeAttribute('data-reorder-active');
+            toggle.setAttribute('aria-pressed', 'false');
+            toggle.textContent = 'Reorder';
+        }
+    }
+
     async function saveWatchOrder(list) {
         if (!list || !list.dataset.reorderUrl || list.dataset.savingOrder) return;
 
@@ -1449,32 +1474,68 @@
         }
     }
 
-    function beginWatchDrag(item, list) {
-        if (!item || !list || getWatchOrder(list).length < 2) return false;
+    function beginWatchDrag(item, list, event) {
+        if (!item || !list || !list.hasAttribute('data-reorder-active') || getWatchOrder(list).length < 2) {
+            return false;
+        }
 
-        draggedWatch = item;
+        const rect = item.getBoundingClientRect();
+        const placeholder = document.createElement('div');
+        placeholder.className = 'watch-drop-placeholder';
+        placeholder.style.height = `${rect.height}px`;
+        list.insertBefore(placeholder, item);
+
         list.dataset.originalOrder = getWatchOrder(list).join(',');
         list.setAttribute('data-reordering', '');
         item.setAttribute('data-dragging', '');
+
+        Object.assign(item.style, {
+            position: 'fixed',
+            width: `${rect.width}px`,
+            left: `${rect.left}px`,
+            top: `${rect.top}px`,
+            transform: 'translate3d(0, 0, 0)',
+        });
+
+        draggedWatch = {
+            item,
+            list,
+            placeholder,
+            startLeft: rect.left,
+            startTop: rect.top,
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+        };
         return true;
     }
 
-    function moveWatchDrag(list, y) {
-        if (!draggedWatch || !list || !list.contains(draggedWatch)) return;
+    function moveWatchDrag(event) {
+        if (!draggedWatch) return;
 
-        const afterElement = getDragAfterElement(list, y);
+        const { item, list, placeholder, startLeft, startTop, offsetX, offsetY } = draggedWatch;
+        const x = event.clientX - offsetX - startLeft;
+        const y = event.clientY - offsetY - startTop;
+        item.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+
+        const afterElement = getDragAfterElement(list, event.clientY);
         if (afterElement) {
-            list.insertBefore(draggedWatch, afterElement);
+            list.insertBefore(placeholder, afterElement);
         } else {
-            list.appendChild(draggedWatch);
+            list.appendChild(placeholder);
         }
     }
 
-    function finishWatchDrag(item, list) {
-        draggedWatch = null;
-        if (item) item.removeAttribute('data-dragging');
+    function finishWatchDrag() {
+        if (!draggedWatch) return;
 
+        const { item, list, placeholder } = draggedWatch;
+        draggedWatch = null;
+        item.removeAttribute('data-dragging');
+        item.removeAttribute('style');
         if (!list) return;
+
+        list.insertBefore(item, placeholder);
+        placeholder.remove();
         list.removeAttribute('data-reordering');
         const oldOrder = list.dataset.originalOrder || '';
         const newOrder = getWatchOrder(list).join(',');
@@ -1485,77 +1546,31 @@
         }
     }
 
-    document.addEventListener('dragstart', (event) => {
+    document.addEventListener('pointerdown', (event) => {
         const handle = event.target.closest('[data-drag-handle]');
         if (!handle) return;
 
         const item = handle.closest('[data-watch-fragment]');
         const list = item && item.closest('[data-reorder-list]');
-        if (!beginWatchDrag(item, list)) {
-            event.preventDefault();
+        if (!beginWatchDrag(item, list, event)) {
             return;
         }
 
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', item.dataset.watchId || '');
-    });
-
-    document.addEventListener('dragover', (event) => {
-        if (!draggedWatch) return;
-        const list = event.target.closest('[data-reorder-list]');
-        if (!list || !list.contains(draggedWatch)) return;
-
         event.preventDefault();
-        moveWatchDrag(list, event.clientY);
-    });
-
-    document.addEventListener('drop', (event) => {
-        if (draggedWatch) event.preventDefault();
-    });
-
-    document.addEventListener('dragend', () => {
-        if (!draggedWatch) return;
-        const item = draggedWatch;
-        const list = item.closest('[data-reorder-list]');
-        finishWatchDrag(item, list);
-    });
-
-    document.addEventListener('pointerdown', (event) => {
-        if (event.pointerType === 'mouse') return;
-        const handle = event.target.closest('[data-drag-handle]');
-        if (!handle) return;
-
-        const item = handle.closest('[data-watch-fragment]');
-        const list = item && item.closest('[data-reorder-list]');
-        if (!item || !list || getWatchOrder(list).length < 2) return;
-
         pointerReorder = {
-            active: false,
             handle,
-            item,
-            list,
             pointerId: event.pointerId,
-            startY: event.clientY,
         };
+        if (handle.setPointerCapture) {
+            handle.setPointerCapture(event.pointerId);
+        }
     });
 
     document.addEventListener('pointermove', (event) => {
         if (!pointerReorder || pointerReorder.pointerId !== event.pointerId) return;
-        const distance = Math.abs(event.clientY - pointerReorder.startY);
-        if (!pointerReorder.active) {
-            if (distance < 8) return;
-            if (!beginWatchDrag(pointerReorder.item, pointerReorder.list)) {
-                pointerReorder = null;
-                return;
-            }
-            pointerReorder.active = true;
-            if (pointerReorder.handle.setPointerCapture) {
-                pointerReorder.handle.setPointerCapture(event.pointerId);
-            }
-        }
 
         event.preventDefault();
-        moveWatchDrag(pointerReorder.list, event.clientY);
+        moveWatchDrag(event);
     }, { passive: false });
 
     function finishPointerReorder(event) {
@@ -1571,15 +1586,21 @@
             }
         }
 
-        if (state.active) {
-            finishWatchDrag(state.item, state.list);
-        }
+        finishWatchDrag();
     }
 
     document.addEventListener('pointerup', finishPointerReorder);
     document.addEventListener('pointercancel', finishPointerReorder);
 
     document.addEventListener('click', (event) => {
+        const reorderToggle = event.target.closest('[data-reorder-toggle]');
+        if (reorderToggle) {
+            event.preventDefault();
+            const list = document.querySelector('[data-reorder-list]');
+            setReorderMode(!(list && list.hasAttribute('data-reorder-active')));
+            return;
+        }
+
         const toggle = event.target.closest('.dropdown-toggle');
         if (toggle) {
             const dropdown = toggle.closest('details.dropdown');

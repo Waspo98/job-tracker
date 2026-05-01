@@ -4,7 +4,6 @@
         <div class="watch-drag">
             <button type="button"
                     class="icon-btn drag-handle"
-                    draggable="true"
                     data-drag-handle
                     aria-label="Drag {{ w.company_name }} alert to reorder">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -44,7 +43,10 @@
                     <span class="chip">all roles</span>
                 {% endif %}
                 {% if not w.email_enabled %}
-                    <span class="chip warn">notifications paused</span>
+                    <span class="chip warn">email paused</span>
+                {% endif %}
+                {% if w.push_enabled %}
+                    <span class="chip kw">push enabled</span>
                 {% endif %}
                 {% if w.last_error %}
                     <span class="chip warn">last scan failed</span>
@@ -105,25 +107,13 @@
                             <span>Check</span>
                         </button>
                     </form>
-                    <form action="/toggle-email/{{ w.id }}" method="POST" data-async-form>
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="menu-item" role="menuitem" data-busy-label="Saving...">
-                            {% if w.email_enabled %}
-                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
-                                <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-                                <path d="M4 4l16 16" />
-                            </svg>
-                            <span>Pause Notifications</span>
-                            {% else %}
-                            <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
-                                <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-                            </svg>
-                            <span>Resume Notifications</span>
-                            {% endif %}
-                        </button>
-                    </form>
+                    <button type="button" class="menu-item" role="menuitem" data-modal-target="notifications-watch-{{ w.id }}">
+                        <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+                            <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+                        </svg>
+                        <span>Edit Notifications</span>
+                    </button>
                     <button type="button" class="menu-item" role="menuitem" data-modal-target="edit-watch-{{ w.id }}">
                         <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M12 20h9" />
@@ -176,6 +166,40 @@
             <div class="modal-actions">
                 <button type="submit" formaction="{{ url_for('preview_watch', watch_id=w.id) }}" class="btn btn-ghost">Preview</button>
                 <button type="submit" class="btn btn-primary">Save & Check</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog class="app-modal notification-modal" id="notifications-watch-{{ w.id }}">
+        <div class="modal-header">
+            <div>
+                <div class="modal-title">Notifications</div>
+                <div class="modal-sub">{{ w.company_name }}</div>
+            </div>
+            <button type="button" class="modal-close" data-modal-close aria-label="Close notification dialog">&times;</button>
+        </div>
+        <form action="/notifications/{{ w.id }}" method="POST" class="modal-body" data-async-form data-close-modal-on-success>
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="push_enabled" value="{{ 1 if w.push_enabled else 0 }}">
+            <div class="notification-options">
+                <label class="notification-option">
+                    <span>
+                        <span class="notification-title">Email alerts</span>
+                        <span class="notification-copy">Send new matches to your account email.</span>
+                    </span>
+                    <input type="checkbox" name="email_enabled" value="1" {% if w.email_enabled %}checked{% endif %}>
+                </label>
+                <label class="notification-option disabled">
+                    <span>
+                        <span class="notification-title">Browser push</span>
+                        <span class="notification-copy">Push delivery will use this device after subscription setup is added.</span>
+                    </span>
+                    <input type="checkbox" name="push_enabled" value="1" {% if w.push_enabled %}checked{% endif %} disabled>
+                </label>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+                <button type="submit" class="btn btn-primary" data-busy-label="Saving...">Save Notifications</button>
             </div>
         </form>
     </dialog>

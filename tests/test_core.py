@@ -83,6 +83,11 @@ class DatabaseBehaviorTests(unittest.TestCase):
         watch = db.get_watch_for_user(self.watch_id, self.user['id'])
         self.assertEqual(watch['email_enabled'], 0)
 
+        self.assertTrue(db.set_watch_notification_settings(self.watch_id, self.user['id'], True, True))
+        watch = db.get_watch_for_user(self.watch_id, self.user['id'])
+        self.assertEqual(watch['email_enabled'], 1)
+        self.assertEqual(watch['push_enabled'], 1)
+
     def test_watch_order_can_be_rearranged(self):
         second_id = db.add_watch(
             self.user['id'],
@@ -568,9 +573,35 @@ class FlaskRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(payload['ok'])
         self.assertEqual(payload['replace_target'], f'#watch-fragment-{watch_id}')
-        self.assertIn('notifications paused', payload['html'])
+        self.assertIn('email paused', payload['html'])
         self.assertEqual(payload['stats']['alerts'], 1)
         self.assertEqual(db.get_watch_for_user(watch_id, user['id'])['email_enabled'], 0)
+
+    def test_notification_settings_can_return_updated_card_json(self):
+        user, token = self._login()
+        watch_id = db.add_watch(
+            user['id'],
+            'Notify Co',
+            'https://notify.example/careers',
+            'custom',
+            None,
+            '',
+        )
+
+        response = self.client.post(
+            f'/notifications/{watch_id}',
+            data={'_csrf_token': token, 'push_enabled': '1'},
+            headers={'Accept': 'application/json', 'X-Requested-With': 'fetch'},
+        )
+        payload = response.get_json()
+        watch = db.get_watch_for_user(watch_id, user['id'])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload['ok'])
+        self.assertIn('email paused', payload['html'])
+        self.assertIn('push enabled', payload['html'])
+        self.assertEqual(watch['email_enabled'], 0)
+        self.assertEqual(watch['push_enabled'], 1)
 
     def test_check_watch_can_return_updated_card_json(self):
         user, token = self._login()

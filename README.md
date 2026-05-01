@@ -9,7 +9,7 @@ It stores users, watches, and discovered jobs in SQLite. The active flow is inte
 - Per-user job watches
 - Edit saved watches and re-check immediately
 - Preview matching jobs before saving an alert
-- Pause email alerts while still tracking matches in the app
+- Per-alert notification settings for email, with browser push groundwork
 - Keyword filtering by job title
 - SQLite persistence
 - Email alerts through Gmail SMTP/app passwords
@@ -62,6 +62,14 @@ For Gmail alerts, create an app password:
 3. Put the generated password in `SMTP_PASS`.
 
 If SMTP is missing or fails, the app keeps discovered jobs pending for notification and retries on future checks.
+
+## Push Notification Framework
+
+Browser push delivery is intentionally staged. The UI and database now have per-alert push preferences, the service worker can display push payloads, and `push_subscriptions` can store browser subscription keys. The remaining pieces are:
+
+1. Add VAPID public/private keys to the environment.
+2. Add a browser subscription endpoint that saves `endpoint`, `p256dh`, and `auth` for the logged-in user.
+3. Send Web Push payloads from `_notify_for_new_jobs()` when push is enabled for an alert.
 
 ## Authentik SSO
 

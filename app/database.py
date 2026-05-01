@@ -58,6 +58,7 @@ def init_db():
                 ats_slug TEXT,
                 keywords TEXT NOT NULL DEFAULT '',
                 email_enabled INTEGER DEFAULT 1,
+                push_enabled INTEGER DEFAULT 0,
                 sort_order INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_checked TIMESTAMP,
@@ -79,6 +80,19 @@ def init_db():
                 active INTEGER DEFAULT 1,
                 UNIQUE(watch_id, job_id),
                 FOREIGN KEY (watch_id) REFERENCES watches(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                endpoint TEXT NOT NULL UNIQUE,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                user_agent TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                active INTEGER DEFAULT 1,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
         """)
 
@@ -126,6 +140,10 @@ def init_db():
             logger.info("Migrating watches table to add email_enabled")
             conn.execute("ALTER TABLE watches ADD COLUMN email_enabled INTEGER DEFAULT 1")
         conn.execute("UPDATE watches SET email_enabled = 1 WHERE email_enabled IS NULL")
+        if 'push_enabled' not in watch_cols:
+            logger.info("Migrating watches table to add push_enabled")
+            conn.execute("ALTER TABLE watches ADD COLUMN push_enabled INTEGER DEFAULT 0")
+        conn.execute("UPDATE watches SET push_enabled = 0 WHERE push_enabled IS NULL")
         if 'sort_order' not in watch_cols:
             logger.info("Migrating watches table to add sort_order")
             conn.execute("ALTER TABLE watches ADD COLUMN sort_order INTEGER")
@@ -157,6 +175,8 @@ def init_db():
                 ON found_jobs(watch_id, active);
             CREATE INDEX IF NOT EXISTS idx_found_jobs_watch_found_at
                 ON found_jobs(watch_id, found_at);
+            CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_active
+                ON push_subscriptions(user_id, active);
         """)
 
 
@@ -266,6 +286,16 @@ def set_watch_email_enabled(watch_id, user_id, enabled):
         cur = conn.execute(
             "UPDATE watches SET email_enabled = ? WHERE id = ? AND user_id = ? AND active = 1",
             (1 if enabled else 0, watch_id, user_id)
+        )
+        return cur.rowcount > 0
+
+
+def set_watch_notification_settings(watch_id, user_id, email_enabled, push_enabled):
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE watches SET email_enabled = ?, push_enabled = ? "
+            "WHERE id = ? AND user_id = ? AND active = 1",
+            (1 if email_enabled else 0, 1 if push_enabled else 0, watch_id, user_id),
         )
         return cur.rowcount > 0
 
