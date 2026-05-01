@@ -2,7 +2,7 @@ import ipaddress
 import socket
 from urllib.parse import urljoin, urlparse
 
-from http_client import build_session
+from .http_client import build_session
 
 
 class UnsafeUrlError(Exception):

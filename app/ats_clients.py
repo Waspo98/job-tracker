@@ -2,10 +2,11 @@ import hashlib
 import re
 from urllib.parse import parse_qs, urljoin, urlparse
 
-import requests
 from bs4 import BeautifulSoup
-from http_client import get as http_get
-from url_safety import UnsafeUrlError, fetch_public_url
+import requests
+
+from .http_client import get as http_get
+from .url_safety import UnsafeUrlError, fetch_public_url
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
