@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { ButtonHTMLAttributes, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import type { ButtonHTMLAttributes, CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
@@ -24,6 +24,17 @@ type Toast = {
   category: Category;
   message: string;
   leaving?: boolean;
+};
+
+type DragFrame = {
+  watchId: number;
+  pointerId: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+  left: number;
+  top: number;
 };
 
 const UI_EXIT_MS = 180;
@@ -451,6 +462,7 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
   const queryClient = useQueryClient();
   const [reorderMode, setReorderMode] = useState(false);
   const [draggingId, setDraggingId] = useState<number | null>(null);
+  const [dragFrame, setDragFrame] = useState<DragFrame | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const dragPointerIdRef = useRef<number | null>(null);
   const dragOriginalIdsRef = useRef<number[]>([]);
@@ -533,6 +545,7 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
     const originalIds = dragOriginalIdsRef.current;
     const nextIds = current?.watches.map((watch) => watch.id) || [];
 
+    setDragFrame(null);
     setDraggingId(null);
     dragPointerIdRef.current = null;
 
@@ -550,6 +563,14 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
     const handleMove = (event: globalThis.PointerEvent) => {
       if (dragPointerIdRef.current !== event.pointerId) return;
       event.preventDefault();
+      setDragFrame((frame) => {
+        if (!frame || frame.pointerId !== event.pointerId) return frame;
+        return {
+          ...frame,
+          left: event.clientX - frame.offsetX,
+          top: event.clientY - frame.offsetY
+        };
+      });
       moveDraggingWatch(event.clientY);
     };
 
@@ -575,9 +596,23 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
     if (!current || current.watches.length < 2 || reorder.isPending) return;
 
     event.preventDefault();
+    const fragment = event.currentTarget.closest<HTMLElement>("[data-watch-fragment]");
+    if (!fragment) return;
+
+    const rect = fragment.getBoundingClientRect();
     dragPointerIdRef.current = event.pointerId;
     dragOriginalIdsRef.current = current.watches.map((watch) => watch.id);
     dragOriginalDashboardRef.current = current;
+    setDragFrame({
+      watchId,
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+      left: rect.left,
+      top: rect.top
+    });
     setDraggingId(watchId);
 
     try {
@@ -620,17 +655,29 @@ function DashboardPage({ notify, interval }: { notify: (message: string, categor
         {dashboard.watches.length === 0 ? (
           <EmptyState title="No alerts yet" detail="Add a company careers page to start watching for new roles." />
         ) : (
-          dashboard.watches.map((watch) => (
-            <WatchCard
-              key={watch.id}
-              watch={watch}
-              reorderMode={reorderMode}
-              isDragging={draggingId === watch.id}
-              onDragStart={beginDraggingWatch}
-              onAction={handleAction}
-              notify={notify}
-            />
-          ))
+          dashboard.watches.map((watch) => {
+            const isDragging = draggingId === watch.id;
+            const dragStyle: CSSProperties | undefined = isDragging && dragFrame ? {
+              left: dragFrame.left,
+              top: dragFrame.top,
+              width: dragFrame.width
+            } : undefined;
+
+            return (
+              <Fragment key={watch.id}>
+                {isDragging && dragFrame && <div className="watch-drop-placeholder" style={{ height: dragFrame.height }} />}
+                <WatchCard
+                  watch={watch}
+                  reorderMode={reorderMode}
+                  isDragging={isDragging}
+                  dragStyle={dragStyle}
+                  onDragStart={beginDraggingWatch}
+                  onAction={handleAction}
+                  notify={notify}
+                />
+              </Fragment>
+            );
+          })
         )}
       </div>
     </>
@@ -729,6 +776,7 @@ function WatchCard({
   watch,
   reorderMode,
   isDragging,
+  dragStyle,
   onDragStart,
   onAction,
   notify
@@ -736,6 +784,7 @@ function WatchCard({
   watch: Watch;
   reorderMode: boolean;
   isDragging: boolean;
+  dragStyle?: CSSProperties;
   onDragStart: (watchId: number, event: ReactPointerEvent<HTMLButtonElement>) => void;
   onAction: (action: ActionResponse) => void;
   notify: (message: string, category?: Category) => void;
@@ -766,7 +815,7 @@ function WatchCard({
   const faviconHost = domainFromUrl(watch.careers_url);
 
   return (
-    <article className={cx("watch-fragment", isDragging && "dragging")} id={`watch-${watch.id}`} data-watch-fragment data-watch-id={watch.id}>
+    <article className={cx("watch-fragment", isDragging && "dragging")} id={`watch-${watch.id}`} data-watch-fragment data-watch-id={watch.id} style={dragStyle}>
       <div className="watch-card">
         {reorderMode && (
           <div className="watch-drag">
