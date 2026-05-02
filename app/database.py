@@ -447,6 +447,16 @@ def set_watch_notification_settings(watch_id, user_id, email_enabled, push_enabl
         return cur.rowcount > 0
 
 
+def set_all_watch_notification_settings(user_id, email_enabled, push_enabled):
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE watches SET email_enabled = ?, push_enabled = ? "
+            "WHERE user_id = ? AND active = 1",
+            (1 if email_enabled else 0, 1 if push_enabled else 0, user_id),
+        )
+        return cur.rowcount
+
+
 def upsert_push_subscription(user_id, endpoint, p256dh, auth, user_agent=None):
     with get_db() as conn:
         conn.execute(

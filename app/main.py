@@ -1102,6 +1102,23 @@ async def update_settings(payload: UserSettingsIn, user: Any = Depends(current_u
     return _settings_out(settings)
 
 
+@app.post("/api/settings/notifications/apply-defaults", response_model=ActionOut, dependencies=[Depends(require_csrf)])
+async def apply_notification_defaults(user: Any = Depends(current_user)) -> ActionOut:
+    settings = _settings_out(db.get_user_settings(int(user["id"])))
+    updated = db.set_all_watch_notification_settings(
+        int(user["id"]),
+        settings.default_email_enabled,
+        settings.default_push_enabled,
+    )
+    dashboard_data = _dashboard_for_user(int(user["id"]))
+    return ActionOut(
+        message=f"Notification defaults applied to {updated} existing alert{'s' if updated != 1 else ''}.",
+        category="success",
+        watches=dashboard_data.watches,
+        stats=dashboard_data.stats,
+    )
+
+
 @app.get("/api/data/export")
 async def export_data(user: Any = Depends(current_user)) -> dict[str, Any]:
     return db.export_user_data(int(user["id"]), check_interval_hours=_current_check_interval())

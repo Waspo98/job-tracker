@@ -378,6 +378,54 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(watch["email_enabled"], 0)
         self.assertEqual(watch["push_enabled"], 1)
 
+    def test_apply_notification_defaults_updates_existing_watches(self):
+        token = self._register()
+        first_id = db.add_watch(
+            1,
+            "First Co",
+            "https://first.example/careers",
+            "custom",
+            None,
+            "",
+            email_enabled=True,
+            push_enabled=False,
+        )
+        second_id = db.add_watch(
+            1,
+            "Second Co",
+            "https://second.example/careers",
+            "custom",
+            None,
+            "",
+            email_enabled=True,
+            push_enabled=False,
+        )
+        self.client.put(
+            "/api/settings",
+            json={
+                "appearance": "system",
+                "default_email_enabled": False,
+                "default_push_enabled": True,
+                "check_interval_hours": 4,
+            },
+            headers={"X-CSRF-Token": token},
+        )
+
+        response = self.client.post(
+            "/api/settings/notifications/apply-defaults",
+            headers={"X-CSRF-Token": token},
+        )
+        first = db.get_watch_for_user(first_id, 1)
+        second = db.get_watch_for_user(second_id, 1)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["message"], "Notification defaults applied to 2 existing alerts.")
+        self.assertEqual(response.json()["stats"]["alerts"], 2)
+        self.assertEqual(first["email_enabled"], 0)
+        self.assertEqual(first["push_enabled"], 1)
+        self.assertEqual(second["email_enabled"], 0)
+        self.assertEqual(second["push_enabled"], 1)
+
     def test_test_notification_sends_push_to_current_user_subscription(self):
         token = self._register()
         calls = []

@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'job-tracker-v5';
+const CACHE_VERSION = 'job-tracker-v11';
 const APP_SHELL = [
   '/offline',
   '/static/logo.png?v=20260501-brand',

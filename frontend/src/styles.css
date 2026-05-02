@@ -83,6 +83,7 @@ html[data-theme="light"] {
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html {
@@ -1181,6 +1182,8 @@ footer {
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .notification-option {

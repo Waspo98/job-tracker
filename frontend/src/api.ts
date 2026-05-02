@@ -88,6 +88,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(settings)
     }),
+  applyNotificationDefaults: () =>
+    apiFetch<ActionResponse>("/api/settings/notifications/apply-defaults", { method: "POST" }),
   testNotification: () =>
     apiFetch<ActionResponse>("/api/settings/test-notification", { method: "POST" }),
   exportData: () => apiFetch<Record<string, unknown>>("/api/data/export"),

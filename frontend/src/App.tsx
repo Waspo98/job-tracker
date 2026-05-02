@@ -1002,7 +1002,6 @@ function DashboardPage({ notify }: { notify: (message: string, category?: Catego
       <header className="page-header">
         <div className="page-label">// dashboard</div>
         <h1 className="page-title">Your Job Alerts</h1>
-        <p className="page-sub">Alerts check every {dashboard.stats.interval} hours. New matches are emailed to your account address.</p>
       </header>
 
       <StatsRow stats={dashboard.stats} />
@@ -1726,6 +1725,23 @@ function SettingsPage({ notify }: { notify: (message: string, category?: Categor
     onError: (error) => setAutosaveMessage(messageFromError(error))
   });
 
+  const applyNotificationDefaults = useMutation({
+    mutationFn: async () => {
+      if (defaultPushEnabled) {
+        const config = pushConfigQuery.data || await api.pushConfig();
+        await ensurePushSubscription(config);
+      }
+      return api.applyNotificationDefaults();
+    },
+    onSuccess: (action) => {
+      queryClient.setQueryData<Dashboard>(["dashboard"], (current) => applyActionToDashboard(current, action));
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      setAutosaveMessage(action.message);
+    },
+    onError: (error) => setAutosaveMessage(messageFromError(error))
+  });
+
   const exportData = useMutation({
     mutationFn: api.exportData,
     onSuccess: (data) => {
@@ -1807,7 +1823,6 @@ function SettingsPage({ notify }: { notify: (message: string, category?: Categor
       <header className="page-header">
         <div className="page-label">// settings</div>
         <h1 className="page-title">Settings</h1>
-        <p className="page-sub">Account-wide defaults for this Job Tracker workspace.</p>
       </header>
 
       <section className="card settings-card">
@@ -1853,6 +1868,15 @@ function SettingsPage({ notify }: { notify: (message: string, category?: Categor
             />
           </div>
           <div className="notification-actions">
+            <Button
+              variant="ghost"
+              loading={applyNotificationDefaults.isPending}
+              disabled={save.isPending || (pushUnavailable && defaultPushEnabled)}
+              icon={<RefreshCcw size={16} />}
+              onClick={() => applyNotificationDefaults.mutate()}
+            >
+              Overwrite existing notification settings
+            </Button>
             <Button
               variant="ghost"
               loading={testNotification.isPending}
