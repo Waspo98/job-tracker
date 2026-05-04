@@ -159,6 +159,8 @@ AUTHENTIK_REQUIRE_VERIFIED_EMAIL=1
 AUTHENTIK_DISABLE_PASSWORD_LOGIN=0
 ```
 
+With `AUTHENTIK_AUTO_REGISTER=1`, first-time Authentik users are created automatically after a successful OIDC callback. If `AUTHENTIK_REQUIRE_VERIFIED_EMAIL=1`, Authentik must include an `email_verified=true` claim for the user; otherwise Job Tracker redirects back to login and refuses to create the local account.
+
 Configure the Authentik redirect URI as:
 
 ```text

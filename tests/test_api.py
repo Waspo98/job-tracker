@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
@@ -152,6 +153,37 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(session_response.status_code, 200)
         self.assertTrue(payload["authenticated"])
         self.assertEqual(payload["user"]["email"], "sso@example.com")
+
+    def test_authentik_callback_explains_unverified_email(self):
+        class FakeAuthentikClient:
+            server_metadata = {}
+
+            async def authorize_access_token(self, _request):
+                return {
+                    "id_token": "id-token",
+                    "userinfo": {
+                        "email": "sso@example.com",
+                        "email_verified": False,
+                    },
+                }
+
+        main.AUTHENTIK_ENABLED = True
+        main.AUTHENTIK_REQUIRE_VERIFIED_EMAIL = True
+        main.AUTHENTIK_DISPLAY_NAME = "Overbay.app"
+        main._get_authentik_client = lambda: FakeAuthentikClient()
+
+        response = self.client.get("/auth/authentik/callback", follow_redirects=False)
+        query = parse_qs(urlparse(response.headers["location"]).query)
+        session_payload = self.client.get("/api/session").json()
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(
+            query["auth_error"][0],
+            "Your SSO login worked, but Job Tracker could not sign you in because "
+            "Overbay.app has not verified the email address on that account. "
+            "Verify the email address in Overbay.app, then try again.",
+        )
+        self.assertFalse(session_payload["authenticated"])
 
     def test_authentik_logout_returns_provider_logout_url_and_clears_session(self):
         class FakeAuthentikClient:

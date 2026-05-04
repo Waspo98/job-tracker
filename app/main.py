@@ -474,16 +474,26 @@ def _truthy_claim(value: Any) -> bool:
 def _get_or_create_authentik_user(userinfo: dict[str, Any]) -> tuple[Any | None, str | None]:
     email = str(userinfo.get("email") or "").strip().lower()
     if not _is_valid_email(email):
-        return None, f"{AUTHENTIK_DISPLAY_NAME} did not provide a valid email address."
+        return None, (
+            f"Your SSO login worked, but Job Tracker could not sign you in because "
+            f"{AUTHENTIK_DISPLAY_NAME} did not share a valid email address."
+        )
 
     if AUTHENTIK_REQUIRE_VERIFIED_EMAIL and not _truthy_claim(userinfo.get("email_verified")):
-        return None, f"{AUTHENTIK_DISPLAY_NAME} did not mark this email address as verified."
+        return None, (
+            f"Your SSO login worked, but Job Tracker could not sign you in because "
+            f"{AUTHENTIK_DISPLAY_NAME} has not verified the email address on that account. "
+            f"Verify the email address in {AUTHENTIK_DISPLAY_NAME}, then try again."
+        )
 
     user = db.get_user_by_email(email)
     if user:
         return user, None
     if not AUTHENTIK_AUTO_REGISTER:
-        return None, "No local account exists for this email address."
+        return None, (
+            "Your SSO login worked, but Job Tracker does not have a local account "
+            "for that email address. Ask an admin to create one, then try again."
+        )
     return db.create_sso_user(email)
 
 

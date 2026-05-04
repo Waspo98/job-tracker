@@ -718,6 +718,7 @@ function AuthView({ notify, session }: { notify: (message: string, category?: Ca
     const authError = params.get("auth_error");
     if (!authError) return;
 
+    notify(authError, "error");
     params.delete("auth_error");
     const nextSearch = params.toString();
     window.history.replaceState(
