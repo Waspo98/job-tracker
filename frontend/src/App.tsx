@@ -529,7 +529,9 @@ export default function App() {
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       const register = () => {
-        navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+        navigator.serviceWorker.register("/sw.js")
+          .then((registration) => registration.update())
+          .catch(() => undefined);
       };
       if (document.readyState === "complete") {
         register();
