@@ -21,6 +21,14 @@ def fake_check(jobs=None, error=None):
     return _check
 
 
+class FakeResponse:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        return None
+
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -263,6 +271,54 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(ats_clients._keywords_match("Mechanical Engineer", "engineer, -intern"))
         self.assertFalse(ats_clients._keywords_match("Mechanical Engineering Intern", "engineer, -intern"))
         self.assertTrue(ats_clients._keywords_match("Product Designer", "-intern"))
+
+    def test_custom_scraper_detects_minister_heading_without_apply_link(self):
+        original_fetch = ats_clients.fetch_public_url
+        html = """
+        <html><body>
+          <main>
+            <h3>Minister of Outreach &amp; Missions</h3>
+            <p>This is a full-time position. Please review the documents below for more details.</p>
+            <a href="https://example.com/job-description.pdf">Job Description</a>
+            <h5>HOW TO APPLY:</h5>
+            <p>Please email application materials to hiring@example.com.</p>
+          </main>
+        </body></html>
+        """
+        ats_clients.fetch_public_url = lambda *_args, **_kwargs: FakeResponse(html)
+
+        try:
+            jobs, error = ats_clients.check_custom_url("https://www.windsorroad.org/careers", "minister")
+        finally:
+            ats_clients.fetch_public_url = original_fetch
+
+        self.assertIsNone(error)
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["title"], "Minister of Outreach & Missions")
+        self.assertEqual(jobs[0]["url"], "https://www.windsorroad.org/careers")
+
+    def test_custom_scraper_uses_nearby_cta_for_heading_jobs(self):
+        original_fetch = ats_clients.fetch_public_url
+        html = """
+        <html><body>
+          <section>
+            <h4><i>Minister of Outreach &amp; Missions</i></h4>
+            <p>We are hiring a full-time ministerial position.</p>
+            <a href="/careers">Learn More</a>
+          </section>
+        </body></html>
+        """
+        ats_clients.fetch_public_url = lambda *_args, **_kwargs: FakeResponse(html)
+
+        try:
+            jobs, error = ats_clients.check_custom_url("https://www.windsorroad.org/", "")
+        finally:
+            ats_clients.fetch_public_url = original_fetch
+
+        self.assertIsNone(error)
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["title"], "Minister of Outreach & Missions")
+        self.assertEqual(jobs[0]["url"], "https://www.windsorroad.org/careers")
 
     def test_notification_update_returns_watch_without_fragment_html(self):
         token = self._register()

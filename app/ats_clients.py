@@ -20,7 +20,8 @@ JOB_SIGNALS = re.compile(
     r'specialist|consultant|architect|lead|head of|vp |vice president|recruiter|'
     r'intern|associate|senior|junior|staff|principal|product|research|marketing|'
     r'sales|operations|finance|legal|hr |human resources|data|software|hardware|'
-    r'mechanical|electrical|clinical|regulatory|quality|manufacturing)\b',
+    r'mechanical|electrical|clinical|regulatory|quality|manufacturing|minister|'
+    r'pastor|chaplain)\b',
     re.I
 )
 
@@ -33,6 +34,12 @@ NOISE_PATTERNS = re.compile(
 
 BOARD_URL_RE = re.compile(
     r'(?:https?:)?//[^\s"\'<>)]*(?:greenhouse\.io|lever\.co)[^\s"\'<>)]*',
+    re.I
+)
+
+JOB_CTA_RE = re.compile(
+    r'\b(apply|learn more|view job|job details|details|read more|see more|'
+    r'get in touch|contact)\b',
     re.I
 )
 
@@ -124,6 +131,71 @@ def _normalise_urlish_value(value):
     if 'greenhouse.io' in value or 'lever.co' in value:
         return f'https://{value.lstrip("/")}'
     return value
+
+
+def _resolve_http_href(base_url, href):
+    href = (href or '').strip()
+    if not href or href.startswith('#'):
+        return ''
+
+    absolute = urljoin(base_url, href)
+    if urlparse(absolute).scheme in ('http', 'https'):
+        return absolute
+    return ''
+
+
+def _heading_rank(tag_name):
+    match = re.fullmatch(r'h([1-6])', (tag_name or '').lower())
+    return int(match.group(1)) if match else None
+
+
+def _nearby_job_href(element, base_url):
+    """
+    Find the most useful URL for a job title that is rendered as plain text.
+    Many custom careers pages put the title in a heading and use a nearby CTA
+    for the posting; if no CTA exists, the watched page itself is the listing.
+    """
+    if not element:
+        return base_url
+
+    direct_link = element.find('a', href=True) if hasattr(element, 'find') else None
+    if direct_link:
+        href = _resolve_http_href(base_url, direct_link.get('href'))
+        if href:
+            return href
+
+    title_rank = _heading_rank(getattr(element, 'name', ''))
+    for sib in list(element.next_siblings)[:8]:
+        if not hasattr(sib, 'find_all'):
+            continue
+
+        sibling_rank = _heading_rank(getattr(sib, 'name', ''))
+        if title_rank and sibling_rank and sibling_rank <= title_rank:
+            break
+
+        links = []
+        if getattr(sib, 'name', '') == 'a' and sib.get('href'):
+            links.append(sib)
+        links.extend(sib.find_all('a', href=True))
+
+        for link in links:
+            label = link.get_text(' ', strip=True)
+            if JOB_CTA_RE.search(label):
+                href = _resolve_http_href(base_url, link.get('href'))
+                if href:
+                    return href
+
+    for parent in list(element.parents)[:6]:
+        for link in parent.find_all('a', href=True):
+            if element in getattr(link, 'parents', []):
+                continue
+            label = link.get_text(' ', strip=True)
+            if JOB_CTA_RE.search(label):
+                href = _resolve_http_href(base_url, link.get('href'))
+                if href:
+                    return href
+
+    return base_url
 
 
 def _clean_slug(value):
@@ -239,6 +311,8 @@ def check_custom_url(url, keywords):
                 href = a['href']
                 if not href.startswith('http'):
                     href = urljoin(url, href)
+            else:
+                href = _nearby_job_href(li, url)
             if _looks_like_job(text):
                 candidates.append({'text': text, 'href': href, 'el': li})
 
@@ -247,7 +321,7 @@ def check_custom_url(url, keywords):
         for tag in soup.find_all(['h2', 'h3', 'h4']):
             text = tag.get_text(strip=True)
             if _looks_like_job(text):
-                candidates.append({'text': text, 'href': '', 'el': tag})
+                candidates.append({'text': text, 'href': _nearby_job_href(tag, url), 'el': tag})
 
     # Deduplicate by normalised text and apply keyword filter
     seen_texts = set()
