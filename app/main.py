@@ -10,8 +10,9 @@ from typing import Any
 from urllib.parse import urlencode, urljoin, urlparse
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from bs4 import BeautifulSoup
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
@@ -44,7 +45,7 @@ except ImportError:  # pywebpush is optional unless VAPID keys are configured.
 from . import database as db
 from .ats_clients import check_watch
 from .email_utils import send_job_alert
-from .url_safety import validate_public_http_url
+from .url_safety import fetch_public_url, validate_public_http_url
 
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -130,6 +131,7 @@ MAX_PASSWORD_LENGTH = 256
 MAX_PUSH_ENDPOINT_LENGTH = 2048
 MAX_PUSH_KEY_LENGTH = 512
 MAX_JOB_NOTES_LENGTH = 4000
+MAX_COMPANY_ICON_BYTES = 1024 * 1024
 APPEARANCE_CHOICES = {"system", "light", "dark"}
 JOB_STATUS_CHOICES = {"", "interested", "applied", "ignored", "saved"}
 REGISTRATION_MODE = os.environ.get("REGISTRATION_MODE", "first-user-only").strip().lower()
@@ -144,6 +146,16 @@ INSECURE_SECRET_KEYS = {
 oauth = OAuth() if OAuth else None
 _authentik_client: Any | None = None
 _scheduler: BackgroundScheduler | None = None
+ICON_PAGE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+ICON_FETCH_HEADERS = {
+    "User-Agent": ICON_PAGE_HEADERS["User-Agent"],
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+}
+ICON_PATH_SUFFIXES = (".ico", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
 
 
 app = FastAPI(title="Job Tracker API")
@@ -330,6 +342,136 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
     if isinstance(row, dict):
         return row.get(key, default)
     return default
+
+
+def _normalise_company_icon_source_url(url: str | None) -> str | None:
+    value = str(url or "").strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    if parsed.username or parsed.password:
+        return None
+    try:
+        parsed.port
+    except ValueError:
+        return None
+    return value
+
+
+def _url_origin(url: str) -> str:
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _response_content_type(response: Any) -> str:
+    return str(getattr(response, "headers", {}).get("content-type", "")).split(";", 1)[0].strip().lower()
+
+
+def _icon_link_rel_text(link: Any) -> str:
+    rel = link.get("rel")
+    if isinstance(rel, list):
+        return " ".join(str(item).lower() for item in rel)
+    return str(rel or "").lower()
+
+
+def _icon_link_score(link: Any) -> int:
+    rel_text = _icon_link_rel_text(link)
+    score = 0
+    if "apple-touch-icon" in rel_text:
+        score += 400
+    if "icon" in rel_text:
+        score += 100
+    if "mask-icon" in rel_text:
+        score -= 50
+
+    sizes = str(link.get("sizes") or "").lower().replace(",", " ").split()
+    for size in sizes:
+        if "x" not in size:
+            continue
+        width, height = size.split("x", 1)
+        if width.isdigit() and height.isdigit():
+            score += min(int(width), int(height))
+    return score
+
+
+def _company_icon_candidates(source_url: str) -> list[str]:
+    origin = _url_origin(source_url)
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str | None) -> None:
+        value = str(candidate or "").strip()
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc or value in seen:
+            return
+        seen.add(value)
+        candidates.append(value)
+
+    try:
+        response = fetch_public_url(source_url, headers=ICON_PAGE_HEADERS, timeout=6, max_redirects=3)
+        if getattr(response, "status_code", 200) < 400 and "html" in _response_content_type(response):
+            page_url = str(getattr(response, "url", "") or source_url)
+            soup = BeautifulSoup(response.text, "html.parser")
+            page_icons: list[tuple[int, str]] = []
+            for link in soup.find_all("link", href=True):
+                if "icon" not in _icon_link_rel_text(link):
+                    continue
+                href = str(link.get("href") or "").strip()
+                if href:
+                    page_icons.append((_icon_link_score(link), urljoin(page_url, href)))
+            for _, icon_url in sorted(page_icons, reverse=True):
+                add(icon_url)
+    except Exception as exc:
+        logger.debug("Could not inspect company icon links for %s: %s", source_url, exc)
+
+    add(urljoin(origin, "/apple-touch-icon.png"))
+    add(urljoin(origin, "/apple-touch-icon-precomposed.png"))
+    add(urljoin(origin, "/favicon-192x192.png"))
+    add(urljoin(origin, "/favicon-32x32.png"))
+    add(urljoin(origin, "/favicon.png"))
+    add(urljoin(origin, "/favicon.ico"))
+    return candidates
+
+
+def _looks_like_company_icon(response: Any, url: str) -> bool:
+    media_type = _response_content_type(response)
+    if media_type.startswith("image/"):
+        return True
+    if media_type in {"application/octet-stream", "binary/octet-stream"}:
+        return urlparse(url).path.lower().endswith(ICON_PATH_SUFFIXES)
+    return not media_type and urlparse(url).path.lower().endswith(ICON_PATH_SUFFIXES)
+
+
+def _company_icon_response(icon_url: str) -> Response | None:
+    try:
+        response = fetch_public_url(icon_url, headers=ICON_FETCH_HEADERS, timeout=6, max_redirects=3)
+    except Exception as exc:
+        logger.debug("Could not fetch company icon %s: %s", icon_url, exc)
+        return None
+
+    if getattr(response, "status_code", 200) >= 400 or not _looks_like_company_icon(response, icon_url):
+        return None
+
+    raw_content = getattr(response, "content", b"") or b""
+    if isinstance(raw_content, str):
+        raw_content = raw_content.encode("utf-8")
+    content = bytes(raw_content)
+    if not content or len(content) > MAX_COMPANY_ICON_BYTES:
+        return None
+
+    media_type = _response_content_type(response) or "image/png"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+def _company_icon_url(watch: Any) -> str | None:
+    source_url = _normalise_company_icon_source_url(str(_row_value(watch, "careers_url", "") or ""))
+    if not source_url:
+        return None
+    return f"/api/company-icon?{urlencode({'url': source_url})}"
 
 
 def _is_valid_email(email: str) -> bool:
@@ -651,11 +793,15 @@ def _push_payload(watch: Any, new_jobs: list[Any]) -> dict[str, Any]:
         body += f", +{count - 2} more"
     if not body:
         body = f"{count} new listing{'s' if count != 1 else ''} found."
-    return {
+    payload = {
         "title": f"New job{'s' if count != 1 else ''} at {company}",
         "body": body,
         "url": "/jobs",
     }
+    icon_url = _company_icon_url(watch)
+    if icon_url:
+        payload["icon"] = icon_url
+    return payload
 
 
 def _send_push_to_user(user_id: int, payload_data: dict[str, Any], context: str = "user") -> dict[str, int]:
@@ -1314,6 +1460,22 @@ async def reorder(payload: ReorderIn, user: Any = Depends(current_user)) -> Acti
         raise HTTPException(status_code=400, detail="Could not save that alert order.")
     dashboard_data = _dashboard_for_user(int(user["id"]))
     return ActionOut(message="Alert order saved.", category="success", watches=dashboard_data.watches, stats=dashboard_data.stats)
+
+
+@app.get("/api/company-icon")
+async def company_icon(url: str) -> Response:
+    source_url = _normalise_company_icon_source_url(url)
+    if not source_url:
+        raise HTTPException(status_code=400, detail="Please provide a valid company URL.")
+
+    for icon_url in _company_icon_candidates(source_url):
+        response = _company_icon_response(icon_url)
+        if response is not None:
+            return response
+
+    fallback = FileResponse(STATIC_DIR / "logo-192.png", media_type="image/png")
+    fallback.headers["Cache-Control"] = "public, max-age=3600"
+    return fallback
 
 
 @app.get("/health")

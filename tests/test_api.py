@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -22,8 +23,12 @@ def fake_check(jobs=None, error=None):
 
 
 class FakeResponse:
-    def __init__(self, text):
+    def __init__(self, text="", status_code=200, headers=None, content=None, url=None):
         self.text = text
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.content = content if content is not None else text.encode("utf-8")
+        self.url = url
 
     def raise_for_status(self):
         return None
@@ -569,6 +574,42 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["subscription_info"]["endpoint"], "https://push.example/subscription/1")
         self.assertIn("Firmware Engineer", calls[0]["data"])
+        payload_data = json.loads(calls[0]["data"])
+        self.assertEqual(
+            payload_data["icon"],
+            "/api/company-icon?url=https%3A%2F%2Fpush.example%2Fcareers",
+        )
+
+    def test_company_icon_uses_page_icon_link(self):
+        original_fetch = main.fetch_public_url
+        calls = []
+
+        def fake_fetch(url, **_kwargs):
+            calls.append(url)
+            if url == "https://company.example/careers":
+                return FakeResponse(
+                    '<html><head><link rel="icon" sizes="192x192" href="/icons/company.png"></head></html>',
+                    headers={"content-type": "text/html; charset=utf-8"},
+                    url=url,
+                )
+            if url == "https://company.example/icons/company.png":
+                return FakeResponse(
+                    headers={"content-type": "image/png"},
+                    content=b"company-png",
+                    url=url,
+                )
+            return FakeResponse(status_code=404, headers={"content-type": "text/html"}, url=url)
+
+        main.fetch_public_url = fake_fetch
+        try:
+            response = self.client.get("/api/company-icon", params={"url": "https://company.example/careers"})
+        finally:
+            main.fetch_public_url = original_fetch
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.content, b"company-png")
+        self.assertEqual(response.headers["content-type"], "image/png")
+        self.assertEqual(calls[:2], ["https://company.example/careers", "https://company.example/icons/company.png"])
 
     def test_reorder_persists_alert_order(self):
         token = self._register()

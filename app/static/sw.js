@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'job-tracker-v14';
+const CACHE_VERSION = 'job-tracker-v15';
 const APP_SHELL = [
   '/offline',
   '/static/logo.png?v=20260501-brand',
@@ -74,7 +74,7 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'Job Tracker';
   const options = {
     body: payload.body || 'New job alert activity is available.',
-    icon: '/static/notification-empty.png?v=20260509-empty',
+    icon: payload.icon || '/static/logo-192.png?v=20260501-brand',
     badge: '/static/notification-briefcase.png?v=20260509-briefcase2',
     data: {
       url: payload.url || '/',
